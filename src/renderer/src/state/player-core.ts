@@ -21,10 +21,20 @@
  *   事 —— 换一个带 `retry` 的地址（绕开浏览器缓存复用）、把话说在**播放条上**而不是弹 toast。
  *   底栏那一行如实汇报每一步（见 handlePlaybackFailure 与 loadingText）：
  *     起播                    → 「正在获取音源…」
- *     3s 没出声 / 报错        → 「播放失败，正在切换第 N 个音源…」（最多切 3 次）
+ *     超时 / 报错             → 「播放失败，正在切换第 N 个音源…」（最多切 3 次）
  *     切满 3 个仍不出声       → 跳到下一首，重新走一遍
  *     连续 3 首都这样         → 红字「连续 3 首歌曲无法播放，终止播放」，不再自动往下跳
  *     播到一半没数据          → 「缓冲中…」
+ *
+ *   ★ 换源是**串行**的，同一时刻永远只有一次尝试在飞（见 SOURCE_SWITCH_BACKOFF_MS）：
+ *     以前是「3s 一到就再要一次地址」，旧请求并不取消，四次尝试等于四个并行解析挤同一个
+ *     插件 worker，越试越慢。现在改成「失败 → 等一段递增的时间（给后端后台换源留出落地的
+ *     时间）→ 再要一次」，旧请求在换 src 的那一刻由浏览器中止；首次也给了足够长的预算
+ *     （慢插件解析要 9 秒上下）。
+ *
+ * ★ **预热下一首**（见 state/song-prefetch）：起播成功后请后端把队列里的下一首提前解析 +
+ *   下载 + 转码，下一次点播直接命中缓存。这与上面的重试是两件事：一个治「等太久」，一个
+ *   治「等到了却是坏的」。
  * ★ 试满之前**不判死**（不写「无法播放」）：一次瞬时失败（直链过期 / 后端正在换源 / IO 抖动）
  *   很常见，切一两次往往就回来了；当场写「不可用」等于把一次抖动报成这首歌坏了。
  * ★ 元数据（封面 / 歌词 / 歌手 / 歌名）缺失的补齐**不在这个文件里**：它跟播放没有耦合
@@ -46,10 +56,11 @@ import { getLyric, getSong, reportPlayed } from '@/api/endpoints'
 import { fetchCoverAccentFor } from '@/lib/accent'
 import { parseLyrics, type ParsedLyric } from '@shared/lyric'
 import { songCoverUrl } from '@shared/metadata'
-import { buildCoverUrl, buildSongUrl } from '@/lib/url'
+import { buildCoverUrl, buildSongUrl, prefetchSongPath } from '@/lib/url'
 import { displayArtist } from '@/lib/format'
 import { resourceContext, useAuth } from './useAuth'
 import { useSettings } from './useSettings'
+import { resetPrefetch, schedulePrefetch } from './song-prefetch'
 
 const EMPTY_LYRIC: ParsedLyric = { lines: [], synced: false, meta: {}, offset: 0 }
 
@@ -257,8 +268,10 @@ function scheduleVolumePersist(volume: number, immediate = false): void {
  *     startSong 的成功路径，不拦一下的话一次收听会往服务端报好几次播放。
  *   · `consecutiveFailures` —— 连续几首「切满仍不出声」。这已经不是某一首歌的问题了
  *     （后端不可达 / 音源全挂），再往下跳只是把队列刷完、把错误刷掉。
- *   · `sourceTimer` —— 「起播后 3s 还没出声」的那一下。换歌 / 清队列要把它撤掉，否则会往
+ *   · `sourceTimer` —— 「起播后多久还没出声」的那一下。换歌 / 清队列要把它撤掉，否则会往
  *     新歌头上补一刀。
+ *   · `pendingSwitch` —— 已经安排了、但还没到点的换源（退避期间）。它同时充当**串行闸**：
+ *     同一首歌的一轮里只允许有一个「待发生」的换源，迟到的错误不再叠加第二次。
  */
 let currentAttempt = 0
 let expectedSrc = ''
@@ -266,20 +279,43 @@ let requestedTrack: number | undefined
 let accountedSong = -1
 let consecutiveFailures = 0
 let sourceTimer: number | null = null
+let pendingSwitch: { songId: number; attempt: number; timer: number } | null = null
 
 /**
- * 起播后多久还没出声，就认定**这个音源**不行、换下一个。
+ * 起播后多久还没出声，就认定这个音源不行。
  *
- * ★ 这是整套重试的节拍器：请求可能一直挂着（后端在重新解析、甚至跑到插件里联网找源），
- *   干等下去用户只看到一个不动的播放条。3s 一到就换 —— 而界面在同一时刻已经写着在做什么。
- * ★ 3s 也是给后端重新解析留的时间：比这更短只会拿到同一份失败，白烧一次请求。
+ * ★ 首次给 12 秒：慢插件解析本来就要 9 秒上下（后端注释里写着「B站 music/url 解析要 ~9s」），
+ *   早先那个 3 秒等于给慢源判了死刑 —— 每次都被我们自己的表掐断，然后重发一次同样慢的请求，
+ *   四次尝试全部撞死在同一个地方。HTMLAudioElement 不像 libmpv / 小爱音箱那样有「几秒无数据
+ *   就断连」的硬上限，给足时间是**没有代价**的。
+ * ★ 换源之后（attempt ≥ 1）给 8 秒：解析路径没变，重来一次通常一样慢，但也不能再回到 3 秒。
  */
-const SOURCE_TIMEOUT_MS = 3000
+const FIRST_ATTEMPT_TIMEOUT_MS = 12_000
+const RETRY_ATTEMPT_TIMEOUT_MS = 8_000
+
+/** 本地文件读不出来：只再试一次，而且很快就该有结论（IO 抖动而已） */
+const LOCAL_ATTEMPT_TIMEOUT_MS = 5_000
+
+/**
+ * 第 N 次换源前的等待（N = 1, 2, 3），**递增**。
+ *
+ * ★ 为什么必须等：后端解析失败时只是**同步**回一个 502，真正的换源是**后台**做的
+ *   （`serveRemote` 里的 AsyncReassign：跨插件找候选、候选之间还有 3s 间隔、成功后才回写
+ *   数据库）。刚报错就重发，命中的几乎必然是同一个还没被换掉的坏源 —— 以前那四次「切换
+ *   音源」大多是这样白白烧掉的。递增的等待正是留给它落地的时间。
+ * ★ 为什么不能更久：再长用户就是在盯一个不动的播放条。三条加起来最坏也就十来秒。
+ */
+const SOURCE_SWITCH_BACKOFF_MS = [2_000, 4_000, 6_000]
+
+/** 本地文件没有「换源」这回事，重试只是确认不是瞬时抖动，等半秒就够 */
+const LOCAL_SWITCH_BACKOFF_MS = 500
 
 /**
  * 一次收听最多**切换**几次音源（首次要来的那个不算）。切满还不出声就跳到下一首。
  *
- * ★ 3 次是「用户还愿意等」的上限：每个音源最多 3s，最坏 12s 就该见分晓。
+ * ★ 次数没变（还是 3 次），变的是每次之间的节奏：见上面的超时与退避。最坏总时长 ≈
+ *   12 + 2+8 + 4+8 + 6+8 = 48s，只有「后端一直挂着不回应」才会走到；真到那一步前面的
+ *   连续失败计数也会先把它拦下来。
  */
 const MAX_SOURCE_SWITCHES = 3
 
@@ -290,7 +326,8 @@ const MAX_LOCAL_PLAY_ATTEMPTS = 2
  * 连续几首都切满仍不出声，就**终止播放**（不再一首首往下跳）。
  *
  * ★ 判据是「连续」：中间只要有一首真的出声了，计数就归零（见 startSong 的记账那一段）。
- * ★ 3 首：每首最坏切 3 次，到第 3 首已经半分多钟没有任何声音，足够了。
+ * ★ 3 首：最常见的那条路（后端直接 4xx/502 快速失败）每首只花十来秒，三首就是半分钟以上
+ *   没有任何声音 —— 足够了；真遇上后端一直挂着不回应，本来就该由用户在底栏那句话上叫停。
  */
 const MAX_CONSECUTIVE_FAILURES = 3
 
@@ -320,6 +357,25 @@ function clearSourceTimer(): void {
   }
 }
 
+/** 这一次尝试最多等多久（本地文件与网络源、首次与换源的预算都不同，见上面三条常量） */
+function sourceTimeoutFor(song: Song, attempt: number): number {
+  if (song.type === 'local') return LOCAL_ATTEMPT_TIMEOUT_MS
+  return attempt === 0 ? FIRST_ATTEMPT_TIMEOUT_MS : RETRY_ATTEMPT_TIMEOUT_MS
+}
+
+/** 第 `nextAttempt` 次尝试之前要等多久（见 SOURCE_SWITCH_BACKOFF_MS） */
+function sourceSwitchBackoffFor(song: Song, nextAttempt: number): number {
+  if (song.type === 'local') return LOCAL_SWITCH_BACKOFF_MS
+  const index = Math.min(nextAttempt - 1, SOURCE_SWITCH_BACKOFF_MS.length - 1)
+  return SOURCE_SWITCH_BACKOFF_MS[Math.max(0, index)]
+}
+
+function cancelPendingSwitch(): void {
+  if (pendingSwitch === null) return
+  window.clearTimeout(pendingSwitch.timer)
+  pendingSwitch = null
+}
+
 /** `MediaError.code` → 一句能放在播放条上短话（底栏那一行放不下完整原因） */
 function describeMediaError(code: number | undefined): string {
   switch (code) {
@@ -336,32 +392,39 @@ function describeMediaError(code: number | undefined): string {
 
 export const playerCore = create<PlayerState>((set, get) => {
   /**
-   * 给「这一次音源」上表：3s 里还没出声就换下一个（判据是 `playing`，不是 `canplay` ——
-   * 有数据不等于真的响起来了）。
+   * 给「这一次尝试」上表：预算内还没出声就算这个音源不行（判据是 `playing`，不是 `canplay`
+   * ——有数据不等于真的响起来了）。
    *
+   * ★ 预算按「第几次尝试」与「是不是本地文件」区分，见 sourceTimeoutFor。首次给得最宽：
+   *   慢插件解析本来就要 9 秒上下，早先的 3 秒只会把它判死。
    * ★ 出声（playing 事件）与失败（error 事件 / play() 被拒）都会把它撤掉，这里只是兜底，
    *   以及覆盖「请求一直挂着、什么都不发生」的那一种。
    */
-  function armSourceTimer(song: Song): void {
+  function armSourceTimer(song: Song, attempt: number): void {
     clearSourceTimer()
-    sourceTimer = window.setTimeout(() => {
-      sourceTimer = null
-      // 等待期间换了歌 / 清了队列：这一刀不该补到别人头上
-      if (get().currentSong()?.id !== song.id) return
-      if (get().playing) return
-      handlePlaybackFailure(song, '音源响应超时')
-    }, SOURCE_TIMEOUT_MS)
+    sourceTimer = window.setTimeout(
+      () => {
+        sourceTimer = null
+        // 等待期间换了歌 / 清了队列：这一刀不该补到别人头上
+        if (get().currentSong()?.id !== song.id) return
+        if (get().playing) return
+        handlePlaybackFailure(song, '音源响应超时')
+      },
+      sourceTimeoutFor(song, attempt)
+    )
   }
 
   /**
    * 真正把某首歌灌进 audio 元素。
    *
-   * `attempt` 是「这首歌正在试第几个音源」（0 = 首次）。报错或 3s 没出声时由
-   * handlePlaybackFailure 立刻换下一个；切满仍不出声才跳到下一首。
+   * `attempt` 是「这首歌正在试第几个音源」（0 = 首次）。报错或超时由 handlePlaybackFailure
+   * 安排下一次尝试（退避后），切满仍不出声才跳到下一首。
    */
   async function startSong(song: Song, ctx: PlaybackContext | null, attempt = 0): Promise<void> {
     const settings = useSettings.getState().settings
     clearSourceTimer()
+    // 真的开始新一次加载了：上一轮安排过的换源（如果有）作废
+    cancelPendingSwitch()
     // 首次尝试 = 一次新的收听：上一首选的音轨、上一次的记账都在这时归位
     if (attempt === 0) {
       requestedTrack = undefined
@@ -384,7 +447,7 @@ export const playerCore = create<PlayerState>((set, get) => {
     set({
       error: null,
       /*
-       * ★ 一按下去就说清在做什么，不等那 3 秒到点：用户该知道「正在获取音源」而不是对着
+       * ★ 一按下去就说清在做什么，不等超时到点：用户该知道「正在获取音源」而不是对着
        *   一个不动的播放条猜。换源之后这一句变成「播放失败，正在切换第 N 个音源」。
        */
       status: loadingText(song, attempt),
@@ -403,8 +466,8 @@ export const playerCore = create<PlayerState>((set, get) => {
     expectedSrc = audio.src
     audio.volume = settings.volume
 
-    // 3s 还没出声就算这个音源不行（见 SOURCE_TIMEOUT_MS）
-    armSourceTimer(song)
+    // 预算内还没出声就算这个音源不行（见 sourceTimeoutFor）
+    armSourceTimer(song, attempt)
 
     try {
       await audio.play()
@@ -468,6 +531,8 @@ export const playerCore = create<PlayerState>((set, get) => {
         void reportPlayed(client, song.id, { type: 'play', context: ctx }).catch(() => undefined)
         rememberRecent(song.id)
       }
+      // 这一首已经出声了，才轮到「让下一首别再等」—— 失败/换源途中不预热，免得雪上加霜
+      prefetchUpcoming()
     }
 
     // 封面主色 → 整页强调色（本地文件没有封面可取，只有从曲库那边凑得出地址时才去取）
@@ -514,6 +579,31 @@ export const playerCore = create<PlayerState>((set, get) => {
   }
 
   /**
+   * 起播成功后，把**队列里的下一首**交给后端预热（`?prefetch=1`）。
+   *
+   * ★ 只预热一首、而且要按顺序来：随机播放的「下一首」由 order 决定，不能拿 queue 的下标猜。
+   * ★ 单曲循环不预热：下一首就是正在放的这一首，已经在缓存/播放中了。
+   * ★ 本地文件不预热（`prefetchSongPath` 会返回 null）：它们不经过网络，预热没有意义。
+   */
+  function prefetchUpcoming(): void {
+    const client = useAuth.getState().client
+    if (!client) return
+    const { queue, order, cursor, playMode } = get()
+    if (playMode === 'single' || cursor < 0 || order.length <= 1) return
+    const nextCursor = cursor + 1 >= order.length ? 0 : cursor + 1
+    const next = queue[order[nextCursor]]
+    if (!next) return
+    const { settings } = useSettings.getState()
+    schedulePrefetch(
+      client,
+      prefetchSongPath(next, {
+        quality: settings.quality,
+        normalize: settings.volumeNormalize
+      })
+    )
+  }
+
+  /**
    * 播放失败时的统一处置：**换下一个音源**；切满仍不出声就跳到下一首。
    *
    * ★ 提示一律落在**播放控制栏的歌手位置**（PlayerBar 读 `status` / `error`），**不发 toast**：
@@ -522,6 +612,10 @@ export const playerCore = create<PlayerState>((set, get) => {
    *   （它才有插件、才有跨插件搜索），`retry` 参数保证这次请求不被浏览器缓存吃掉。
    * ★ 切满之前**不判死**：底栏说的是「正在切换第 N 个音源」，不是「无法播放」。一次瞬时失败
    *   （直链过期 / 后端正在换源 / IO 抖动）很常见，切一两次往往就回来了。
+   * ★ 换源**不在这一下立刻发生**（见 SOURCE_SWITCH_BACKOFF_MS）：等一段递增的时间再要新
+   *   地址 —— 一来给后端后台换源留出落地的时间（它才是真正会换源的那一方），二来保证同一
+   *   时刻只有一次尝试在飞（以前是每 3s 再叠一层，四次尝试等于四个并行解析）。
+   *   `pendingSwitch` 同时是「已经安排过了」的闸，迟到的错误不会再叠一次。
    */
   function handlePlaybackFailure(song: Song, detail: string): void {
     /*
@@ -530,16 +624,39 @@ export const playerCore = create<PlayerState>((set, get) => {
      *   写到播放条上（新歌其实一点问题都没有），还白扣一次尝试次数。
      */
     if (get().currentSong()?.id !== song.id) return
+    // 同一轮里已经安排过换源：error 事件与 play() 拒绝常常成对到达，只认第一下
+    if (pendingSwitch?.songId === song.id) return
     clearSourceTimer()
 
     const nextAttempt = currentAttempt + 1
 
     if (nextAttempt < maxAttemptsFor(song)) {
       /*
-       * 立刻换：换源本来就是「这个源不行」的处置，再空等一轮只会让用户多盯一会儿不动的
-       * 播放条。底栏那句由 startSong 一并改成「播放失败，正在切换第 N 个音源」。
+       * 状态先摆出来：退避期间底栏要如实显示「正在换源」，而不是停在那儿一动不动。
+       * 文案与 startSong 里那一句一致（loadingText 是唯一口径）。
        */
-      void startSong(song, get().context, nextAttempt)
+      set({ status: loadingText(song, nextAttempt), buffering: true, error: null })
+      pendingSwitch = {
+        songId: song.id,
+        attempt: nextAttempt,
+        timer: window.setTimeout(
+          () => {
+            pendingSwitch = null
+            // 退避期间用户可能已经切歌 / 暂停：那就不该再替他把这首放起来
+            if (get().currentSong()?.id !== song.id) return
+            // 退避期间它自己出声了（超时那一路尤其可能）：那就别再打断它
+            if (get().playing) return
+            void startSong(song, get().context, nextAttempt)
+          },
+          sourceSwitchBackoffFor(song, nextAttempt)
+        )
+      }
+      /*
+       * ★ 不在这里主动掐断 audio（`removeAttribute('src') + load()`）：那会在退避期间再触发一次
+       *   pause / durationchange，把刚摆上去的「正在切换音源」和进度一起刷掉，而且可能误伤
+       *   「慢一拍才出声」的那一次加载。旧请求会在下一次 startSong 换 src 时由浏览器中止 ——
+       *   那时它本来也已经没用了。
+       */
       return
     }
 
@@ -601,11 +718,14 @@ export const playerCore = create<PlayerState>((set, get) => {
     set({ duration: Number.isFinite(audio.duration) ? audio.duration : 0 })
   })
   /*
-   * 真出声了：撤掉 3s 的表，并把「正在获取音源 / 切换音源」那几句一次收掉。`error` 在这里
-   * 兜的是迟到的那一笔 —— 错误事件比成功晚到一帧时，一首正在正常播放的歌会一直挂着红字。
+   * 真出声了：撤掉起播超时的表，并把「正在获取音源 / 切换音源」那几句一次收掉。`error` 在
+   * 这里兜的是迟到的那一笔 —— 错误事件比成功晚到一帧时，一首正在正常播放的歌会一直挂着红字。
+   * ★ 还要撤掉**已安排但还没到点**的换源：退避期间它自己出声了（慢一拍的那一次加载），
+   *   再按计划换一次就等于把刚响起来的歌打断。
    */
   audio.addEventListener('playing', () => {
     clearSourceTimer()
+    cancelPendingSwitch()
     set({ playing: true, buffering: false, error: null, status: null })
   })
   audio.addEventListener('pause', () => {
@@ -613,9 +733,12 @@ export const playerCore = create<PlayerState>((set, get) => {
      * 一并收掉加载态与那句提示：暂停之后没有「正在等数据」这回事。留着的话，界面会一边显示
      * 暂停、一边还在转圈并说「正在获取音源…」（state/useNowPlayingStatus 就是按它们判的）。
      * 重新播放时 play() / waiting 会把它再置起来。
+     * ★ 例外：正在等换源（pendingSwitch）时，这个 pause 往往是**加载失败自己停下来的**副产物，
+     *   不是用户按的。那一句「正在切换第 N 个音源…」要留着，加载态也要留着。
+     *   「用户真的按了暂停」走的是 pause()/toggle() 两个动作，它们在那里显式取消换源。
      */
     clearSourceTimer()
-    set({ playing: false, buffering: false, status: null })
+    set(pendingSwitch ? { playing: false } : { playing: false, buffering: false, status: null })
     // 通过暂停操作（而非自动播放）也要同步到托盘与系统媒体控件
     const song = get().currentSong()
     if (song) {
@@ -703,7 +826,13 @@ export const playerCore = create<PlayerState>((set, get) => {
         // 队列空：让调用方决定放什么，这里只提示
         return
       }
+      /*
+       * 正在等换源：这一下「播放」交给那次换源，不要另起一次加载 —— 此刻 audio 上还挂着
+       * 上一次失败的加载，play() 只会再报一次错，把「正在切换」的提示换成红字。
+       */
+      if (pendingSwitch) return
       if (!audio.paused) {
+        cancelPendingSwitch()
         audio.pause()
         return
       }
@@ -723,7 +852,11 @@ export const playerCore = create<PlayerState>((set, get) => {
       })
     },
 
-    pause: () => audio.pause(),
+    // 用户按下暂停 = 此刻不要自动放歌：退避中的那次换源一并作废（见 pause 事件的说明）
+    pause: () => {
+      cancelPendingSwitch()
+      audio.pause()
+    },
 
     next: async (auto = false) => step(1, auto),
 
@@ -871,6 +1004,9 @@ export const playerCore = create<PlayerState>((set, get) => {
     },
 
     clearQueue: () => {
+      // 队列没了就没有「下一首」可预热，退避中的换源也不该再发生
+      cancelPendingSwitch()
+      resetPrefetch()
       audio.pause()
       audio.removeAttribute('src')
       clearSourceTimer()
@@ -898,8 +1034,9 @@ export const playerCore = create<PlayerState>((set, get) => {
       const { queue, order, context } = get()
       const cursor = order.indexOf(index)
       if (cursor < 0) return
-      // 用户自己点的：撤掉上一首的 3s 表，连续失败的账也不带过去
+      // 用户自己点的：撤掉上一首的定时器与待发生的换源，连续失败的账也不带过去
       clearSourceTimer()
+      cancelPendingSwitch()
       consecutiveFailures = 0
       set({ cursor })
       const song = queue[index]
@@ -919,12 +1056,14 @@ export const playerCore = create<PlayerState>((set, get) => {
         track
       })
       const wasPlaying = !audio.paused
+      // 切轨要打断的可能正是「退避中的换源」：那条路安排的重试属于上一轨，作废
+      cancelPendingSwitch()
       audio.src = url
       // 换了 src 就要把「期望地址」一起换掉，否则这一轨自己失败时会被 error 处理当成旧地址的迟到错误
       expectedSrc = audio.src
-      // 切轨是一次新的尝试：计数归零，让这一轨也享有一整条候选链；3s 表同样要重新上
+      // 切轨是一次新的尝试：计数归零，让这一轨也享有一整条候选链；起播超时表同样要重新上
       currentAttempt = 0
-      armSourceTimer(song)
+      armSourceTimer(song, 0)
       if (wasPlaying) await audio.play().catch(() => undefined)
     },
 

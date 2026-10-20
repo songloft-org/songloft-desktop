@@ -8,7 +8,8 @@
  *   2. 追加参数用的是 `?` 还是 `&`（拼错就是给服务器发一个畸形路径）；
  *   3. 外链 CDN 的地址**不能**被我们改 query（可能带签名，改了直接失效）；
  *   4. `track` 与 `format` 不能同时出现（后端两个一起给会互相冲突）；
- *   5. 重试标记 `retry` 只在重试时出现（播放失败后重新要地址时绕开浏览器缓存复用）。
+ *   5. 重试标记 `retry` 只在重试时出现（播放失败后重新要地址时绕开浏览器缓存复用）；
+ *   6. 预热路径（`prefetchSongPath`）的参数与真实播放**逐项一致**，且不该预热的歌返回 null。
  *
  * 第 2 条就是写这批用例时暴露出来的：`buildCoverUrl` 在「同源绝对地址且原本没有 query」时
  * 会拼出 `http://host/c.jpg&w=96` —— 缺一个 `?`，`&w=96` 被当成路径的一部分。
@@ -22,7 +23,9 @@ import {
   buildCoverUrl,
   buildLyricUrl,
   buildResourceUrl,
+  buildSongQuery,
   buildSongUrl,
+  prefetchSongPath,
   transcodeFormatFor
 } from './url'
 
@@ -235,5 +238,53 @@ describe('buildSongUrl 的重试标记', () => {
     expect(second).not.toBe(first)
     expect(second).toContain('retry=1')
     expect(second).toContain('access_token=tok')
+  })
+})
+
+describe('buildSongQuery', () => {
+  it('参数顺序与 buildSongUrl 拼出来的完全一致', () => {
+    const options = { quality: '320' as const, normalize: true }
+    expect(buildSongQuery(song({ format: 'wma' }), options)).toBe(
+      'format=mp3&quality=320&normalize=1'
+    )
+    expect(buildSongUrl(song({ format: 'wma' }), ctx, options)).toBe(
+      `http://localhost:58091/api/v1/songs/1/audio?${TOKEN_QS}&format=mp3&quality=320&normalize=1`
+    )
+  })
+
+  it('没有任何参数时是空串（地址不该多出一个 `?`）', () => {
+    expect(buildSongQuery(song({ format: 'mp3' }))).toBe('')
+    expect(buildSongUrl(song({ format: 'mp3' }), ctx)).toBe(
+      `http://localhost:58091/api/v1/songs/1/audio?${TOKEN_QS}`
+    )
+  })
+
+  it('track 与 format 仍然互斥', () => {
+    expect(buildSongQuery(song({ format: 'wma' }), { track: 0 })).toBe('track=0')
+  })
+})
+
+describe('prefetchSongPath', () => {
+  it('曲库里的网络歌曲：带上与播放一致的参数 + prefetch=1', () => {
+    const remote = song({ id: 7, type: 'remote', url: '/api/v1/songs/7/play' })
+    expect(prefetchSongPath(remote)).toBe('/songs/7/play?prefetch=1')
+    expect(prefetchSongPath(remote, { quality: '320', normalize: true })).toBe(
+      '/songs/7/play?quality=320&normalize=1&prefetch=1'
+    )
+  })
+
+  it('本地文件不预热（不经过网络，没什么可预热）', () => {
+    expect(prefetchSongPath(song({ type: 'local' }))).toBeNull()
+    expect(prefetchSongPath(song({ type: 'local', url: localFileUrl('/m/a.flac') }))).toBeNull()
+  })
+
+  it('外链直连不预热（真实播放不走后端，预热只会让后端白下一份）', () => {
+    const external = song({ type: 'remote', url: null, source_url: 'https://cdn.example/a.mp3' })
+    expect(prefetchSongPath(external)).toBeNull()
+  })
+
+  it('id 非正 / 没有地址时不预热', () => {
+    expect(prefetchSongPath(song({ type: 'remote', id: -3 }))).toBeNull()
+    expect(prefetchSongPath(song({ type: 'remote', url: null, source_url: null }))).toBeNull()
   })
 })

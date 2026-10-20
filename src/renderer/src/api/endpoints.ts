@@ -179,6 +179,17 @@ export function getLyric(client: ApiClient, songId: number): Promise<LyricPayloa
   return client.request<LyricPayload>(`/songs/${songId}/lyric`)
 }
 
+/**
+ * 预热一首歌的后端缓存：解析直链 + 下载 + 转码，**立即返回 202**，活在后端继续干。
+ *
+ * ★ 路径由 `lib/url` 的 `prefetchSongPath` 拼（含 `prefetch=1`）：它的 query 必须与真实播放
+ *   逐项一致（format / quality / normalize），否则后端按缓存键算出来的是另一份，等于白下一份。
+ * ★ 返回值没有意义，失败也没人关心（只是这一次没预热上，下次照常解析），所以调用方一律吞掉异常。
+ */
+export function prefetchSong(client: ApiClient, path: string): Promise<void> {
+  return client.request<void>(path)
+}
+
 export function updateSong(
   client: ApiClient,
   id: number,

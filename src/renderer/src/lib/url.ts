@@ -89,6 +89,27 @@ export interface SongUrlOptions {
 }
 
 /**
+ * 播放地址的查询参数（不含地址、不含 token）。
+ *
+ * ★ 单独抽出来是为了让**预热**与真实播放用的是同一份口径：后端按「插件 + 源 + 格式 + 码率 +
+ *   均衡」算缓存键，两边差一项就会预热出一份谁也命中不了的缓存。
+ */
+export function buildSongQuery(song: Song, options: SongUrlOptions = {}): string {
+  const params: string[] = []
+  const { track, quality, normalize, retry } = options
+  if (track != null && track >= 0) {
+    params.push(`track=${track}`)
+  } else {
+    const transcode = transcodeFormatFor(song.format)
+    if (transcode) params.push(`format=${transcode}`)
+  }
+  if (quality && quality !== 'original') params.push(`quality=${quality}`)
+  if (normalize) params.push('normalize=1')
+  if (retry != null && retry > 0) params.push(`retry=${retry}`)
+  return params.join('&')
+}
+
+/**
  * 歌曲播放地址。
  *
  * 与 Flutter 端一致：指定 track 时**不再附加 format** —— 容器由后端按该音轨编码决定
@@ -116,23 +137,27 @@ export function buildSongUrl(
     const retry = options.retry ?? 0
     return retry > 0 ? `${source}?retry=${retry}` : source
   }
-  let result = buildResourceUrl(source, ctx)
+  const result = buildResourceUrl(source, ctx)
   if (!result) return ''
 
-  const push = (param: string): void => {
-    result += `${result.includes('?') ? '&' : '?'}${param}`
-  }
+  const query = buildSongQuery(song, options)
+  if (!query) return result
+  return `${result}${result.includes('?') ? '&' : '?'}${query}`
+}
 
-  const { track, quality, normalize, retry } = options
-  if (track != null && track >= 0) {
-    push(`track=${track}`)
-  } else {
-    const transcode = transcodeFormatFor(song.format)
-    if (transcode) push(`format=${transcode}`)
-  }
-  if (quality && quality !== 'original') push(`quality=${quality}`)
-  if (normalize) push('normalize=1')
-  if (retry != null && retry > 0) push(`retry=${retry}`)
-
-  return result
+/**
+ * 「预热下一首」的请求路径（`GET /songs/{id}/play?…&prefetch=1`，后端立即回 202）。
+ *
+ * ★ 返回 null = 这首歌不值得预热，三种情况：
+ *   · 本地文件（id ≤ 0 的、双击打开的路径型地址）：不经过网络，没有什么可预热的；
+ *   · 外链直连（绝对 http(s)）：真实播放根本走不到后端，预热只会让后端白下一份；
+ *   · 地址为空：连播放地址都没有，预热必然 404。
+ * ★ 路径里刻意不带 `track`：切轨是用户随后的选择，预热按默认轨（原唱）更可能命中。
+ */
+export function prefetchSongPath(song: Song, options: SongUrlOptions = {}): string | null {
+  if (song.id <= 0 || song.type === 'local') return null
+  const source = song.url ?? song.source_url ?? ''
+  if (!source.startsWith('/')) return null
+  const query = buildSongQuery(song, options)
+  return `/songs/${song.id}/play?${query ? `${query}&` : ''}prefetch=1`
 }
