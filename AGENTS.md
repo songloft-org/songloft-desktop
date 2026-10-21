@@ -564,8 +564,18 @@ query 回退分支）—— 按「像不像外链」判断会让整店退成首�
 
 **「GitHub 发现」是来源下拉里的第三类东西**（`PluginStore` 的 `GITHUB_DISCOVERY`）：它**不是**
 订阅源 —— 不进 `sources`、不发给 `/jsplugins/registry/*`。选中它之后这一页改由
-`hooks/useGithubDiscovery` 供数，搜索框那一份关键词同时变成 GitHub 搜索词（还会顺带搜
-`owner/repo`）。四条容易做错的：
+`hooks/useGithubDiscovery` 供数。四条容易做错的：
+
+* **搜索是跨来源的，而且在发现那一侧要搜两遍**。搜索框只有一颗，但一份结果来自两处：
+  订阅源那一半由后端按 `search:` 过滤，GitHub 那一半由 `useGithubDiscovery` 出。于是
+  ① 在「全部订阅源」里带关键词时**也要**问 GitHub（`active: githubCards && client`），
+  命中的卡片以「GitHub 社区里还匹配到 N 个」列在订阅源结果下面 —— 否则「搜得到所有可安装的
+  插件」只对恰好选中「GitHub 发现」那一格的人成立；② 发现那一侧除了把关键词交给 GitHub
+  （按仓库名 / 描述 / README 搜），还要**在本地按插件名 / 入口 / 作者 / owner-repo 再比一遍**
+  核对过的卡片（`shared/github-discovery.ts` 的 `matchesDiscoveryKeyword`）—— 卡片上写的是清单
+  里的名字（仓库叫 `songloft-plugin-radio`、插件叫「电台时光」），GitHub 那句仓库搜索一个字都
+  匹配不上。材料由 hook 里那份 "known" 集合提供，并靠一次「不带关键词的同一页」副查询
+  （每种排序一次，清单有 1 小时缓存）保证**没浏览过也能按名字搜到**。副查询不参与统计。
 
 * **每个仓库都要核对，不能把搜索结果的标题直接列出来**。发现 = 一次搜索 + 每仓库两份读取
   （默认分支的 `plugin.json` + 它声明的 release 资产）。列出来的每一条都必须是「点安装就能装
@@ -582,8 +592,14 @@ query 回退分支）—— 按「像不像外链」判断会让整店退成首�
   前缀，两者互斥（见 `api/endpoints.ts` 那两个函数）。
 * **安装走同一条 `runInstall`**，只有 `source_url` 为空（GitHub release 是公开的，后端匿名下载）
   与「先确认来源 + 权限」那一步不同。插件包装上之后服务端那份清单多半没有 `download_url`，
-  于是 `discoveryInstallState` 会认不出「它就是刚才这个仓库的」—— 所以本页记一份
-  `DiscoverySession`（`entryPath → repoId + version`），否则卡片会当场翻成「覆盖安装」。
+  于是 `discoveryInstallState` 会认不出「它就是刚才这个仓库的」—— 所以要记一份
+  `githubInstalls`（`entryPath → repoId + version`）。
+  ★ 它必须**落在 `AppSettings` 里（持久化）**，不能只是商店页的 `useState`：离开商店页
+  （`ExtensionFrame` 按 `pane` 重建这一栏）或重启应用之后记录就没了，同一张卡片再进来会立刻
+  被 `discoveryInstallState` 判成 `overwrite` —— 界面上就是「入口冲突」，而它警告要替换的
+  其实是它自己。判定还守两条：①「同源」只在**本机真有一份占着这个 entryPath** 时才算
+  （没有占用者就只是「安装」，顺带收掉过期记录）；② 本机清单里的 `updateUrl` 一旦指着**别的
+  仓库**，记录作废（硬证据优先）。安装成功后写记录时顺手把已不在本机的那些清掉。
 
 ### 8.13 整窗透明度 = 透明窗口 + 整棵树 opacity，缺一半都只是「变暗」
 

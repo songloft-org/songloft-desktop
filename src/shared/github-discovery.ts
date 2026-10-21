@@ -318,6 +318,27 @@ export function discoverySearchUrl(
   return `https://api.github.com/search/repositories?q=${query}&sort=${request.sort}&order=desc&per_page=${DISCOVERY_PAGE_SIZE}&page=${request.page}`
 }
 
+/**
+ * 关键词能不能命中这张卡片上的**身份字段**：插件名 / 入口 / 作者 / `owner/repo`。
+ *
+ * ★ 为什么在本地还要再比一遍：GitHub 那边只能按**仓库**的 name / description / readme 搜，
+ *   而卡片上写着的是清单里的 `name`（例如仓库叫 `songloft-plugin-radio`、插件叫「电台时光」）。
+ *   用户照着卡片上的名字搜，GitHub 一句都匹配不上 —— 于是「明明在列表里，搜名字却搜不到」。
+ *   清单只有核对（安装发现页时会拉）之后才知道，所以这一比只能发生在客户端，而且只在
+ *   **已经核对过的那些卡片**上做。
+ *
+ * ★ 只比身份字段，不比 `description`：描述是一整段话，拿它做子串匹配几乎什么都能命中，
+ *   搜出来的列表就不再是「你要找的那个」。
+ */
+export function matchesDiscoveryKeyword(plugin: GithubDiscoveryPlugin, keyword: string): boolean {
+  const term = keyword.trim().toLowerCase()
+  if (!term) return true
+  const { manifest, repository } = plugin
+  return [manifest.name, manifest.entryPath, manifest.author, repository.fullName].some((field) =>
+    field.toLowerCase().includes(term)
+  )
+}
+
 /** 一个 issue/PR/仓库列表项 → 仓库。（不符合发现规则的返回 null，直接丢掉） */
 export function toGithubRepository(value: unknown): GithubRepository | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
@@ -393,14 +414,52 @@ export function installedFromRepository(
   )
 }
 
+/** 一条「这条插件是从哪个仓库装上的」记忆 */
+export interface GithubInstallSource {
+  repositoryId: number
+  /** 装上时的版本。本机清单读得到版本时以它为准，这里只在读不到时兜底 */
+  version: string
+}
+
 /**
- * 本次会话里从发现页装上的那些：entryPath → 来源。
+ * 从「GitHub 发现」装上的那些：`entryPath → 来源`。
  *
  * 为什么需要它：插件包装上之后，服务端存的是**包内**清单（多半没有 `download_url`、
  * `updateUrl` 也可能为空），于是 `installedFromRepository` 认不出「这就是刚才那一条」，
  * 卡片会当场翻成「覆盖安装」并警告要替换别人的插件。
+ *
+ * ★ 它必须**持久化**（落在 `AppSettings.githubInstalls`，见 shared/ipc）。早先它只是商店页
+ *   的一个 `useState`，于是离开商店页（或重启应用）就丢了 —— 再次进来时同一张卡片立刻被
+ *   判成「入口冲突」，警告要替换掉的其实是它自己。
  */
-export type DiscoverySession = Readonly<Record<string, { repositoryId: number; version: string }>>
+export type GithubInstalls = Readonly<Record<string, GithubInstallSource>>
+
+/**
+ * 本机清单里那条更新元数据指向的是不是**别的仓库**。
+ *
+ * 有这种硬证据时，「记下来的来源」不作数：同一个 entryPath 完全可能换过主人（上一份被卸掉、
+ * 另一个仓库的插件占了同一个入口），而记录还留在设置里。
+ */
+function pointsAtAnotherRepository(plugin: GithubDiscoveryPlugin, installed: JSPlugin): boolean {
+  const repository = githubUrlRepository(installed.updateUrl)
+  return repository != null && repository.toLowerCase() !== plugin.repository.fullName.toLowerCase()
+}
+
+/**
+ * 本机这份插件与卡片上的那一条**是不是同一个插件**（软证据）：插件名与作者都对得上。
+ *
+ * 给「来源记录机制上线之前就装好的」那些兜底 —— 它们没有任何凭据，否则一进商店就被判成
+ * 撞了别人的入口。作者为空不算数：那说明清单没写，凭一个名字就认人太随意。
+ */
+function samePluginIdentity(plugin: GithubDiscoveryPlugin, installed: JSPlugin | null): boolean {
+  if (!installed) return false
+  const author = plugin.manifest.author.trim()
+  if (!author) return false
+  return (
+    installed.name === plugin.manifest.name &&
+    installed.author.trim().toLowerCase() === author.toLowerCase()
+  )
+}
 
 export type DiscoveryAction = 'install' | 'update' | 'reinstall' | 'overwrite' | 'blocked'
 
@@ -426,16 +485,36 @@ export function discoveryInstallState(input: {
   installed: readonly JSPlugin[]
   /** 当前连接的服务器版本（拿不到传空串 → 不拦，与上游一致） */
   hostVersion: string
-  session: DiscoverySession
+  /** 「从哪个仓库装上的」——见 GithubInstalls（持久化在设置里） */
+  installs: GithubInstalls
 }): DiscoveryInstallState {
-  const { plugin, installed, hostVersion, session } = input
+  const { plugin, installed, hostVersion, installs } = input
   const entryPath = plugin.manifest.entryPath
   const occupant = installed.find((item) => item.entryPath === entryPath) ?? null
-  const fromSession = session[entryPath]?.repositoryId === plugin.repository.id
-  const sameRepository = fromSession || installedFromRepository(plugin, occupant)
+  /*
+   * ★ 「同源」只在**本机真有一份占着这个入口**时才谈得上：没有占用者就没有「同的是谁」，
+   *   动作只能是「安装」。这条同时收掉一类过期记录 —— 插件早已卸载，记录还留在设置里。
+   * ★ 三条证据，硬的一句优先：
+   *     · 清单证据（`installedFromRepository`）—— 包内清单还留着这个仓库的地址，最硬；
+   *     · 记下来的来源（`githubInstalls`）—— 包内清单什么都没留时的唯一凭据；
+   *     · 同名同作者（`lookalike`）—— 给**记录机制上线之前**就装好的那些兜底：它们本来没有
+   *       任何凭据，一进商店就会被判成撞名。作者非空才认，避免「两个作者都没写作者名」时
+   *       凭一个名字就把别人的插件当成自己的。
+   *   ★ 而清单一旦指着**别的仓库**，那就是相反的硬证据，上面两条软证据一并作废。
+   */
+  const foreign = occupant !== null && pointsAtAnotherRepository(plugin, occupant)
+  const recorded =
+    occupant !== null && !foreign && installs[entryPath]?.repositoryId === plugin.repository.id
+  const lookalike = !foreign && samePluginIdentity(plugin, occupant)
+  const sameRepository =
+    occupant !== null && (recorded || lookalike || installedFromRepository(plugin, occupant))
 
+  /*
+   * 版本以**本机清单**为准：记录是安装那一刻的，之后插件若被别的途径更新过，它已经旧了，
+   * 拿它比版本会把「已是最新」误报成「有新版本」。
+   */
   const installedVersion = sameRepository
-    ? (session[entryPath]?.version ?? occupant?.version ?? '')
+    ? occupant?.version || installs[entryPath]?.version || ''
     : ''
   const comparison = comparePluginVersions(plugin.manifest.version, installedVersion)
   const hasUpdate = sameRepository && comparison != null && comparison > 0

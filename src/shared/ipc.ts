@@ -5,6 +5,7 @@
  * 白名单暴露成 `window.songloft`，渠道名只能从这里取 —— 避免两边各写一份字符串。
  */
 
+import type { GithubInstalls } from './github-discovery'
 import type { ParsedLyric } from './lyric'
 import type { PlayMode, Song } from './types'
 
@@ -546,6 +547,15 @@ export interface AppSettings {
   lastQueueContext: { type: string; key: string } | null
   /** 最近播放（本地，最多 200 条，最新在前） */
   recentSongIds: number[]
+  /**
+   * 从「GitHub 发现」装上的插件：`entryPath → 来源（仓库 id + 版本）`。
+   *
+   * ★ 必须**跟着设置一起落盘**，不能只是商店页的临时 state：插件包装上之后服务端存的是
+   *   **包内**清单（多半没有 `download_url`、`updateUrl` 也可能为空），除此之外没有任何东西
+   *   能证明「本机这一份就是从那个仓库装的」。丢了它，同一张卡片再进商店就会被判成
+   *   「入口冲突」（警告要替换掉的其实是它自己）。
+   */
+  githubInstalls: GithubInstalls
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -596,7 +606,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastQueue: [],
   lastQueueIndex: -1,
   lastQueueContext: null,
-  recentSongIds: []
+  recentSongIds: [],
+  // 没装过任何 GitHub 插件时是空的；老配置读回来由 { ...DEFAULT_SETTINGS, ...persisted } 补齐
+  githubInstalls: {}
 }
 
 export interface ServerEntry {

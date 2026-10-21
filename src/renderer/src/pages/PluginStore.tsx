@@ -32,8 +32,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   discoveryInstallState,
   discoveryRowKey,
-  type DiscoverySession,
-  type GithubDiscoveryPlugin
+  type GithubDiscoveryPlugin,
+  type GithubInstallSource
 } from '@shared/github-discovery'
 import { ApiError } from '@/api/client'
 import { getGithubProxy, getVersion } from '@/api/endpoints'
@@ -63,6 +63,7 @@ import { useGithubDiscovery } from '@/hooks/useGithubDiscovery'
 import { buildResourceUrl } from '@/lib/url'
 import { resourceContext, useAuth } from '@/state/useAuth'
 import { usePlugins } from '@/state/usePlugins'
+import { useSettings } from '@/state/useSettings'
 import { toast } from '@/state/useToasts'
 
 /** 一页拉多少。太小翻页频繁，太大一次请求拿回一堆用不上的 manifest */
@@ -127,16 +128,29 @@ export function PluginStore(): React.JSX.Element {
   const [sort, setSort] = useState<'updated' | 'stars'>('updated')
   const [tokenOpen, setTokenOpen] = useState(false)
   const [hostVersion, setHostVersion] = useState('')
-  const [discoverySession, setDiscoverySession] = useState<DiscoverySession>({})
   /** 选中的是「GitHub 发现」而不是某个订阅源 */
   const discoveryMode = sourceUrl === GITHUB_DISCOVERY
   const installedPlugins = usePlugins((state) => state.plugins)
   /**
-   * ★ 没选中「发现」时 `active` 为 false：那个 hook 连一个请求都不发。
+   * 「这个入口是哪个仓库装进来的」——记在**设置**里（`AppSettings.githubInstalls`），
+   * 不是本页的 state：离开商店页、重启应用之后它还得在。只放本页的话，再进来时同一张卡片
+   * 就会被判成「入口冲突」（要替换掉的其实是它自己，见 shared/github-discovery 的
+   * `discoveryInstallState`）。
+   */
+  const githubInstalls = useSettings((state) => state.settings.githubInstalls)
+  /**
+   * 这一页现在有没有 GitHub 卡片要画：选中的是发现页，或者在订阅源那边**正在搜**。
+   * ★ 搜索是跨来源的：用户在「全部订阅源」里搜一个插件名，GitHub 那一半也该跟着搜 ——
+   *   否则「插件商店能搜到所有可安装的插件」只对他恰好选了哪一格成立。
+   *   不带关键词时仍只有发现页才发请求（一次发现要逐仓库核对，不该为打开商店白花配额）。
+   */
+  const githubCards = discoveryMode || keyword !== ''
+  /**
+   * ★ 没有 GitHub 卡片要画时 `active` 为 false：那个 hook 连一个请求都不发。
    *   关键词用父组件那份**已防抖**的 —— 搜索框是两半来源共用的同一颗。
    */
   const discovery = useGithubDiscovery({
-    active: discoveryMode && client !== null,
+    active: githubCards && client !== null,
     keyword,
     sort
   })
@@ -197,7 +211,8 @@ export function PluginStore(): React.JSX.Element {
    * 一个读不出版本的服务器不该让整个商店不可用）。
    */
   useEffect(() => {
-    if (!discoveryMode || !client) return
+    // 订阅源那边搜索时也会画出 GitHub 卡片，所以判据是「有没有卡片」而不是「是不是发现页」
+    if (!githubCards || !client) return
     let cancelled = false
     getVersion(client)
       .then((info) => {
@@ -207,7 +222,7 @@ export function PluginStore(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [discoveryMode, client])
+  }, [githubCards, client])
 
   useEffect(() => {
     // 发现页不归后端那份聚合结果管：切过去时不能再发一次 registry/refresh
@@ -386,7 +401,7 @@ export function PluginStore(): React.JSX.Element {
       plugin,
       installed: installedPlugins,
       hostVersion,
-      session: discoverySession
+      installs: githubInstalls
     })
     if (state.action === 'blocked') return
 
@@ -426,15 +441,23 @@ export function PluginStore(): React.JSX.Element {
       state.action === 'overwrite'
     )
     if (!installed) return
-    // 插件包装上之后服务端那份清单里多半没有下载地址，认不出「它是这个仓库的」——
-    // 记一笔，卡片才不会当场翻成「覆盖安装」
-    setDiscoverySession((previous) => ({
-      ...previous,
-      [manifest.entryPath]: {
-        repositoryId: plugin.repository.id,
-        version: manifest.version
-      }
-    }))
+    /*
+     * 记一笔「这个入口是这个仓库装进来的」：插件包装上之后服务端那份清单里多半没有下载地址，
+     * 认不出「它是这个仓库的」——不记，卡片当场翻成「覆盖安装」，下次进商店也一样。
+     * ★ 写进**设置**（落盘），不是本页 state：离开商店 / 重启应用之后这一笔仍然作数。
+     * ★ 顺手把「本机已经没有那份插件」的旧记录清掉：同一个入口可能换过主人，
+     *   留着只会把别人家的插件认成自己人（见 `pointsAtAnotherRepository` 那一段）。
+     */
+    const alive = new Set(usePlugins.getState().plugins.map((item) => item.entryPath))
+    const installs: Record<string, GithubInstallSource> = {}
+    for (const [key, value] of Object.entries(useSettings.getState().settings.githubInstalls)) {
+      if (alive.has(key)) installs[key] = value
+    }
+    installs[manifest.entryPath] = {
+      repositoryId: plugin.repository.id,
+      version: manifest.version
+    }
+    void useSettings.getState().patch({ githubInstalls: installs })
   }
 
   /** 源改过之后：商店那份列表与筛选选项都得重新来过（后端也会顺手作废它的缓存） */
@@ -462,6 +485,38 @@ export function PluginStore(): React.JSX.Element {
       : discovery.error?.reason === 'rateLimited'
         ? '已达到 GitHub 请求限额'
         : '加载 GitHub 发现失败'
+
+  /**
+   * GitHub 卡片的**唯一**画法：发现页与「订阅源那边搜出来的那一节」共用。
+   *
+   * 两处各写一遍的话，`discoveryInstallState` 的参数迟早只在一处记得更新 ——
+   * 而「已装 / 可更新 / 入口冲突 / 不兼容」四档是从那一份状态里来的，两处一旦分叉，
+   * 同一个插件在两张卡上会给出两种说法。
+   */
+  const renderDiscoveryCard = (plugin: GithubDiscoveryPlugin): React.JSX.Element => {
+    const key = discoveryRowKey(plugin)
+    return (
+      <GithubDiscoveryCard
+        key={key}
+        plugin={plugin}
+        state={discoveryInstallState({
+          plugin,
+          installed: installedPlugins,
+          hostVersion,
+          installs: githubInstalls
+        })}
+        pending={pending === key}
+        disabled={pending !== null && pending !== key}
+        onInstall={() => void installDiscovery(plugin)}
+      />
+    )
+  }
+
+  /**
+   * 订阅源那一侧搜索时，GitHub 命中/匹配出来的那些（发现页里它们自己就是主列表，这里为空）。
+   * 搜索是**跨来源**的：用户在「全部订阅源」里搜插件名，不该因为没切到发现页就搜不到。
+   */
+  const githubMatches = discoveryMode ? [] : keyword ? discovery.plugins : []
 
   return (
     <div className="page">
@@ -647,27 +702,7 @@ export function PluginStore(): React.JSX.Element {
           ) : null}
 
           {discovery.plugins.length > 0 ? (
-            <ul className="store-grid">
-              {discovery.plugins.map((plugin) => {
-                const key = discoveryRowKey(plugin)
-                const state = discoveryInstallState({
-                  plugin,
-                  installed: installedPlugins,
-                  hostVersion,
-                  session: discoverySession
-                })
-                return (
-                  <GithubDiscoveryCard
-                    key={key}
-                    plugin={plugin}
-                    state={state}
-                    pending={pending === key}
-                    disabled={pending !== null && pending !== key}
-                    onInstall={() => void installDiscovery(plugin)}
-                  />
-                )
-              })}
-            </ul>
+            <ul className="store-grid">{discovery.plugins.map(renderDiscoveryCard)}</ul>
           ) : null}
 
           {!discovery.error && discovery.loading && discovery.plugins.length === 0 ? (
@@ -724,13 +759,22 @@ export function PluginStore(): React.JSX.Element {
             />
           ) : null}
 
-          {!error && !loading && entries.length === 0 ? (
+          {/*
+            空态要等**两半来源都没结果**才摆：搜索是跨来源的（订阅源 + GitHub 社区），
+            只因为订阅源这一半空着就说「没有匹配的扩展」，而 GitHub 那半还在查/刚查到，
+            等于给了一个假的结论。
+          */}
+          {!error &&
+          !loading &&
+          entries.length === 0 &&
+          githubMatches.length === 0 &&
+          !(keyword !== '' && discovery.loading) ? (
             <EmptyState
               icon={<IconStore size={26} />}
               title={keyword ? '没有匹配的扩展' : '商店里还没有扩展'}
               description={
                 keyword
-                  ? '换个关键词试试，或把筛选切回「全部订阅源」。'
+                  ? '订阅源与 GitHub 社区里都没有匹配的扩展，换个关键词试试（也可以搜 owner/repo）。'
                   : selectedSource
                     ? `「${selectedSource.name || selectedSource.url}」里没有可装的扩展。`
                     : sources.length === 0
@@ -738,6 +782,26 @@ export function PluginStore(): React.JSX.Element {
                       : '已配置的订阅源里没有可装的扩展。'
               }
             />
+          ) : null}
+
+          {/*
+            GitHub 那一半：搜索是跨来源的，用户在「全部订阅源」里搜插件名时，GitHub 社区里
+            匹配的那些也一并列在这里（同一张卡片、同一条安装路径）。不列的话，「搜得到所有
+            可安装的插件」只对恰好选中「GitHub 发现」那一格的人成立。
+          */}
+          {keyword !== '' && discovery.loading && githubMatches.length === 0 ? (
+            <p className="field-hint" style={{ marginTop: 10 }}>
+              同时在搜索 GitHub 社区…
+            </p>
+          ) : null}
+
+          {githubMatches.length > 0 ? (
+            <>
+              <p className="field-hint" style={{ marginTop: 14 }}>
+                {`GitHub 社区里还匹配到 ${githubMatches.length} 个（来自「GitHub 发现」，未经审核）。`}
+              </p>
+              <ul className="store-grid">{githubMatches.map(renderDiscoveryCard)}</ul>
+            </>
           ) : null}
 
           {!error && entries.length > 0 ? (

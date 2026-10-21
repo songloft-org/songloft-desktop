@@ -10,6 +10,7 @@ import {
   githubUrlRepository,
   hostCompatibility,
   isRepositoryMetadataUrl,
+  matchesDiscoveryKeyword,
   parseGithubPluginManifest,
   parseReleaseDownload,
   toGithubRepository,
@@ -151,6 +152,38 @@ describe('搜索', () => {
     expect(url).toContain('page=2')
     expect(url).toContain('per_page=20')
   })
+
+  /*
+   * GitHub 只能按**仓库**搜（name / description / readme），而卡片上写着的是清单里的插件名。
+   * 这一段锁的就是「照着卡片上的名字也能搜到」这条本地口径。
+   */
+  it('按卡片上的插件名能命中（仓库名里并没有这几个字）', () => {
+    expect(matchesDiscoveryKeyword(discovery(), '电台')).toBe(true)
+    expect(matchesDiscoveryKeyword(discovery(), '时光机')).toBe(true)
+  })
+
+  it('入口 / 作者 / owner-repo 也算身份', () => {
+    expect(matchesDiscoveryKeyword(discovery(), 'radio-time')).toBe(true)
+    expect(matchesDiscoveryKeyword(discovery(), 'someone')).toBe(true)
+    expect(matchesDiscoveryKeyword(discovery(), 'someone/songloft-plugin-radio')).toBe(true)
+  })
+
+  it('大小写不敏感，首尾空格不算数', () => {
+    expect(matchesDiscoveryKeyword(discovery(), '  RADIO-TIME  ')).toBe(true)
+  })
+
+  it('不命中与空关键词', () => {
+    expect(matchesDiscoveryKeyword(discovery(), '天气')).toBe(false)
+    // 空关键词 = 不过滤（否则清空搜索框会把列表清空）
+    expect(matchesDiscoveryKeyword(discovery(), '   ')).toBe(true)
+  })
+
+  it('只比身份字段，不比描述', () => {
+    const withDescription = discovery({
+      manifest: manifest({ description: '一个能听天气的电台插件' })
+    })
+    expect(matchesDiscoveryKeyword(withDescription, '天气')).toBe(false)
+  })
 })
 
 describe('URL 解析', () => {
@@ -211,7 +244,7 @@ describe('已装状态', () => {
         plugin: discovery(),
         installed: [],
         hostVersion: '1.0.0',
-        session: {}
+        installs: {}
       }).action
     ).toBe('install')
   })
@@ -225,7 +258,7 @@ describe('已装状态', () => {
         plugin: discovery(),
         installed: [occupant],
         hostVersion: '1.0.0',
-        session: {}
+        installs: {}
       }).action
     ).toBe('update')
     expect(
@@ -233,7 +266,7 @@ describe('已装状态', () => {
         plugin: discovery({ manifest: manifest({ version: '1.0.0' }) }),
         installed: [occupant],
         hostVersion: '1.0.0',
-        session: {}
+        installs: {}
       }).action
     ).toBe('reinstall')
   })
@@ -243,21 +276,95 @@ describe('已装状态', () => {
       plugin: discovery(),
       installed: [installed({ author: '另一个作者' })],
       hostVersion: '1.0.0',
-      session: {}
+      installs: {}
     })
     expect(state.action).toBe('overwrite')
     expect(state.occupant?.author).toBe('另一个作者')
   })
 
-  it('本次会话装过的算同源（插件包里的清单往往没有下载地址）', () => {
+  /*
+   * 这一条是「装完再进商店就变成入口冲突」那个缺陷的回归：从发现页装上之后，包内清单里
+   * 什么都不留（没有 download_url、updateUrl 也空），唯一的证据就是**记下来的来源**。
+   * 那份记录必须持久化（落在设置里），否则离开商店页 / 重启之后同一张卡片会当场翻成覆盖安装。
+   */
+  it('记下来源的算同源（插件包里没有下载地址也一样）', () => {
     const state = discoveryInstallState({
       plugin: discovery(),
       installed: [installed({ version: '1.2.3' })],
       hostVersion: '1.0.0',
-      session: { 'radio-time': { repositoryId: REPO.id, version: '1.2.3' } }
+      installs: { 'radio-time': { repositoryId: REPO.id, version: '1.2.3' } }
     })
     expect(state.action).toBe('reinstall')
     expect(state.installedVersion).toBe('1.2.3')
+  })
+
+  /*
+   * 记录机制上线之前就装好的那些一条记录都没有，靠「同名 + 同作者」这条软证据认人 ——
+   * 否则它们一进商店就会被判成撞了别人的入口。
+   */
+  it('没有来源记录时，同名同作者算同一份', () => {
+    const state = discoveryInstallState({
+      plugin: discovery(),
+      installed: [installed({ version: '1.0.0' })],
+      hostVersion: '1.0.0',
+      installs: {}
+    })
+    expect(state.action).toBe('update')
+    expect(state.occupant?.name).toBe('电台时光机')
+  })
+
+  it('作者为空时「同名」不算证据', () => {
+    const state = discoveryInstallState({
+      plugin: discovery({ manifest: manifest({ author: '' }) }),
+      installed: [installed({ author: '' })],
+      hostVersion: '1.0.0',
+      installs: {}
+    })
+    expect(state.action).toBe('overwrite')
+  })
+
+  it('记录指向的是别的仓库 → 不算同源（入口换过主人）', () => {
+    const state = discoveryInstallState({
+      plugin: discovery(),
+      installed: [installed({ author: '另一个作者' })],
+      hostVersion: '1.0.0',
+      installs: { 'radio-time': { repositoryId: 7, version: '1.0.0' } }
+    })
+    expect(state.action).toBe('overwrite')
+  })
+
+  it('本机清单指着别的仓库时，记录不作数', () => {
+    const state = discoveryInstallState({
+      plugin: discovery(),
+      installed: [
+        installed({ updateUrl: 'https://raw.githubusercontent.com/other/plugin/main/plugin.json' })
+      ],
+      hostVersion: '1.0.0',
+      installs: { 'radio-time': { repositoryId: REPO.id, version: '1.2.3' } }
+    })
+    expect(state.action).toBe('overwrite')
+  })
+
+  it('记录还在、本机却没有这个插件了（卸载过）→ 只是安装', () => {
+    const state = discoveryInstallState({
+      plugin: discovery(),
+      installed: [],
+      hostVersion: '1.0.0',
+      installs: { 'radio-time': { repositoryId: REPO.id, version: '1.2.3' } }
+    })
+    expect(state.action).toBe('install')
+    expect(state.installedVersion).toBe('')
+  })
+
+  it('版本以本机清单为准：被别的途径更新过时不误报「有新版本」', () => {
+    const state = discoveryInstallState({
+      plugin: discovery(),
+      installed: [installed({ version: '1.2.3' })],
+      hostVersion: '1.0.0',
+      installs: { 'radio-time': { repositoryId: REPO.id, version: '1.0.0' } }
+    })
+    expect(state.action).toBe('reinstall')
+    expect(state.hasUpdate).toBe(false)
   })
 
   it('服务器版本不够 → 拦住（优先于撞名）', () => {
@@ -265,7 +372,7 @@ describe('已装状态', () => {
       plugin: discovery({ manifest: manifest({ minHostVersion: '2.0.0' }) }),
       installed: [installed({ author: '另一个作者' })],
       hostVersion: '1.9.0',
-      session: {}
+      installs: {}
     })
     expect(state.action).toBe('blocked')
     expect(state.incompatible).toBe(true)
