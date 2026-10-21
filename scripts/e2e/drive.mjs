@@ -190,6 +190,26 @@ window.__t = {
     el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
     return 'OK';
   },
+  /** 记下抽屉此刻的滚动位置再收起它（下一步重开时用它判断「有没有原地不动」） */
+  closeQueueAndMark: () => {
+    const body = document.querySelector('.panel-body');
+    window.__markQueueScroll = body ? body.scrollTop : null;
+    const el = vis('.playerbar button[aria-label="播放队列"]')[0];
+    if (!el) return 'NOT_FOUND';
+    el.click();
+    return 'OK';
+  },
+  /**
+   * 把「看得见的那一页」滚一小段（即时），并把滚完的值记成「上次位置」的基准
+   * （pageScrollKept 拿它比）。用来造一个「当前曲还看得见、但已经不是居中」的现场。
+   */
+  nudgeScroll: (dy) => {
+    const slot = vis('.page-slot')[0];
+    if (!slot) return 'NOT_FOUND:.page-slot';
+    slot.scrollTo({ top: slot.scrollTop + dy, behavior: 'instant' });
+    window.__markScroll = slot.scrollTop;
+    return 'OK';
+  },
   /**
    * 把「看得见的那一页」滚回顶部（即时，不带动画）。
    *
@@ -366,6 +386,47 @@ window.__t = {
       const r = row.getBoundingClientRect();
       const s = slot.getBoundingClientRect();
       return Math.round(Math.abs((r.top + r.bottom) / 2 - (s.top + s.bottom) / 2));
+    })(),
+    /** 当前曲那一行是否**整行**在可视范围内（与 currentRowOffset 互补：那个量居中，这个量「还看得见吗」） */
+    currentRowInView: (() => {
+      const row = vis('.song-row').find((e) => e.dataset.current === 'true');
+      const slot = row?.closest('.page-slot');
+      if (!row || !slot) return null;
+      const r = row.getBoundingClientRect();
+      const s = slot.getBoundingClientRect();
+      return r.top >= s.top - 1 && r.bottom <= s.bottom + 1;
+    })(),
+    /** 看得见的那一页滚到哪儿了 */
+    pageScrollTop: Math.round((vis('.page-slot')[0] || { scrollTop: -1 }).scrollTop),
+    /**
+     * 切走再切回来之后，滚动位置有没有保持住 —— 这是「在视野里就别重新滚」的直接判据。
+     * 基准值由 nudgeScroll 记下（window.__markScroll）；没记过就是 null。
+     */
+    pageScrollKept: (() => {
+      const slot = vis('.page-slot')[0];
+      if (!slot || window.__markScroll == null) return null;
+      return Math.abs(slot.scrollTop - window.__markScroll) < 1;
+    })(),
+    /** 队列抽屉里当前项的中心离滚动区中心多少 px（-1 = 没有当前项 / 抽屉关着） */
+    queueCurrentOffset: (() => {
+      const body = document.querySelector('.panel-body');
+      const item = document.querySelector('.queue-item[data-current="true"]');
+      if (!body || !item) return -1;
+      const b = body.getBoundingClientRect();
+      const r = item.getBoundingClientRect();
+      return Math.round(Math.abs((r.top + r.bottom) / 2 - (b.top + b.bottom) / 2));
+    })(),
+    /**
+     * 抽屉收起再打开之后，滚动位置有没有保持住（基准由 closeQueueAndMark 记下）。
+     * 「别每次打开都重新滚一遍」就是这一条 —— 抽屉关掉时整块会卸载，位置得自己记。
+     * ★ 容差 40px 而不是 1：抽屉的列宽是过渡出来的，重开那一瞬间的版面还不是最终版面
+     *   （同 queueCurrentOffset 那条的原因），落点会差几像素 —— 但那不是「重新滚了一遍」。
+     *   真正滚了一趟的话差的是几百甚至上千像素。
+     */
+    queueScrollKept: (() => {
+      const body = document.querySelector('.panel-body');
+      if (!body || window.__markQueueScroll == null) return null;
+      return Math.abs(body.scrollTop - window.__markQueueScroll) < 40;
     })(),
     cards: vis('.card').length,
     navs: vis('.nav-item').length,
@@ -1505,17 +1566,21 @@ const STEPS = [
   ],
 
   /*
-   * ── 当前曲自动定位到列表中间 ─────────────────────────────────────────
+   * ── 当前曲的定位规则：看不见才居中，看得见就别动 ─────────────────────
    * 这是纯视觉行为，截图里看不出对错（偏了半屏的截图看着也很正常），只能量：
-   * 当前那一行的**中心**与滚动容器中心的距离。所以多了两个口径（见 counts 里的
-   * currentRowIndex / currentRowOffset）。
+   * 当前那一行的**中心**与滚动容器中心的距离、以及它整行还在不在视野里。
+   * 所以有一组口径（见 counts 里的 currentRowIndex / currentRowOffset /
+   * currentRowInView / pageScrollKept）。
    *
    * ★ 必须点**靠后**的一行：点第 0 行的话「居中」被夹到 0，与「贴在顶上」是同一个位置，
    *   断言恒真。这里取第 27 行（共 43 行）—— 它下方还留着十几行，所以也不会被底部夹取
    *   顶掉（那同样是「贴着底」而不是「居中」）。
-   * ★ 后三步是**成对**的：先把当前曲滚出中间，再切走、切回来。切回来时这一页不会重新
-   *   挂载（页面槽常驻，见 App 的 NativePages），所以要靠「我活跃了」重新算一次才回得到
-   *   中间 —— 少了这个口径，「定位只在挂载时跑一次」也照样绿。
+   * ★ 第 85–87 步是**成对**的：先把当前曲滚出视野，再切走、切回来。切回来时这一页不会
+   *   重新挂载（页面槽常驻，见 App 的 NativePages），所以要靠「我活跃了」重新算一次才找得
+   *   回来 —— 少了这个口径，「定位只在挂载时跑一次」也照样绿。
+   * ★ 第 88–90 步是它的**反面**：当前曲还在视野里（只是被用户翻偏了 90px），切走再切回来
+   *   必须一个字都不动。少了这一组，「每次切回来都重新居中」也照样全绿 —— 而那正是先被
+   *   用户否掉的那版行为。
    */
   [
     '79-library-all-again',
@@ -1530,43 +1595,102 @@ const STEPS = [
     {
       // 点的是第 27 行、当前行也是第 27 行：定位到邻行的话这一条立刻红
       currentRowIndex: exactly(26),
-      currentRowOffset: atMost(4),
+      // 这里**不**钉居中：新规则是「看不见才动」，这一屏本来在哪儿就看哪儿 —— 只要求看得见
+      currentRowInView: exactly(true),
       playerTitle: hasSong
     }
   ],
   /*
-   * 队列抽屉是另一套落点规则（只保证「看得见」，不居中），而且它**没有**被上面那套
-   * 「行中心 = 容器中心」覆盖 —— 实测在这里踩过：位置算法把「相对滚动原点的距离」和
-   * 「从当前位置还要滚多少」加在一起，`scrollTop` 被多算一遍，目标越过可滚底部后引擎夹到最底，
-   * 当前项落在视口上方四千像素处：高亮还在，人看不见。队列此刻 43 项、当前项在第 27 项，
-   * 它一定在折线以下，所以这一步真的会走「往下滚」那条分支。
+   * 队列抽屉：看不见才居中（规则见 lib/scroll.ts 的 centerIfHiddenTarget）。
+   *
+   * ★ 这一步真的会走进「看不见」那一支：队列此刻 43 项、当前项在第 27 项，一定在折线以下。
+   * ★ 它同时是回归用例：位置算法一度把「相对滚动原点的距离」和「从当前位置还要滚多少」
+   *   加在一起，`scrollTop` 被多算一遍，目标越过可滚底部后被引擎夹到最底，当前项落在视口
+   *   上方四千像素处 —— 高亮还在，人看不见。只数 queueItems 是抓不到的。
    */
   [
     '81-queue-locate',
     'window.__t.click(\'.playerbar button[aria-label="播放队列"]\')',
     2000,
-    { panel: exactly(1), queueItems: exactly(43), queueCurrentInView: exactly(true) }
+    {
+      panel: exactly(1),
+      queueItems: exactly(43),
+      queueCurrentInView: exactly(true),
+      // 要的是**中间**（中心对中心），不是「推回边缘」。容差 40 而不是 4：抽屉的列宽是
+      // 过渡出来的（.shell-body 的 grid-template-columns），动画期间队列头会重新折行、
+      // 横向滚动条可能一闪，量到的版面与到位后的版面差几十像素（实测 30）。推回边缘那种
+      // 错差的是几百像素，这一步照样抓得住。
+      queueCurrentOffset: atMost(40)
+    }
   ],
-  // 收起抽屉，免得后面三步的截图里多挂一块面板
+  /*
+   * 收起再打开：位置必须原地不动。
+   * ★ 抽屉关掉时整块卸载（.panel-body 跟着消失），滚动位置不会自己留着 —— 组件里得记。
+   *   这一条正是「别每次打开都重新滚一遍」。
+   */
+  ['82-queue-close', 'window.__t.closeQueueAndMark()', 1400, { panel: exactly(0) }],
   [
-    '82-queue-close',
+    '83-queue-reopen',
+    'window.__t.click(\'.playerbar button[aria-label="播放队列"]\')',
+    2000,
+    { panel: exactly(1), queueCurrentInView: exactly(true), queueScrollKept: exactly(true) }
+  ],
+  // 再收起一次，免得后面几步的截图里多挂一块面板
+  [
+    '84-queue-close-again',
     'window.__t.click(\'.playerbar button[aria-label="播放队列"]\')',
     1400,
     { panel: exactly(0) }
   ],
-  // 滚回顶部：当前行此刻离中间很远，于是下一步「切走再切回来」的断言不可能白拿
-  ['83-locate-scrolled-away', 'window.__t.scrollPageTop()', 900, { currentRowOffset: atLeast(50) }],
+  // 滚回顶部：当前行此刻远在折线以下，于是下一步「切走再切回来」必须真的去把它找回来
   [
-    '84-locate-leave',
+    '85-locate-scrolled-away',
+    'window.__t.scrollPageTop()',
+    900,
+    { currentRowInView: exactly(false) }
+  ],
+  [
+    '86-locate-leave',
     "window.__t.click('.nav-item', '最近播放')",
     2000,
     { pageTitle: exactly('最近播放') }
   ],
   [
-    '85-locate-back',
+    '87-locate-back',
     "window.__t.click('.nav-item', '曲库')",
     2400,
-    { pageTitle: exactly('曲库'), currentRowIndex: exactly(26), currentRowOffset: atMost(4) }
+    {
+      pageTitle: exactly('曲库'),
+      currentRowIndex: exactly(26),
+      currentRowInView: exactly(true),
+      // 看不见 → 这次要摆到中间
+      currentRowOffset: atMost(4)
+    }
+  ],
+  // ── 看得见就别动 ─────────────────────────────────────────────────────
+  // 先滚一小段：当前行还在视野里、但已经不居中了（这就是「用户自己翻到的地方」）。
+  [
+    '88-locate-nudge',
+    'window.__t.nudgeScroll(90)',
+    900,
+    { currentRowInView: exactly(true), currentRowOffset: atLeast(20) }
+  ],
+  [
+    '89-remember-leave',
+    "window.__t.click('.nav-item', '最近播放')",
+    2000,
+    { pageTitle: exactly('最近播放') }
+  ],
+  [
+    '90-remember-back',
+    "window.__t.click('.nav-item', '曲库')",
+    2400,
+    {
+      pageTitle: exactly('曲库'),
+      currentRowInView: exactly(true),
+      // ★ 位置一分都不能动：切回来自动居中一次的话这里立刻红
+      pageScrollKept: exactly(true)
+    }
   ]
 ]
 
