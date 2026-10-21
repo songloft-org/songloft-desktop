@@ -83,6 +83,19 @@ const PAGE_SIZE = 20
  */
 const GITHUB_DISCOVERY = '__discovery__'
 
+/**
+ * 来源下拉里，各条源相对「全部订阅源」的那一级缩进。
+ *
+ * ★ 原生 `<select>` 没有嵌套选项：`<option>` 不能包 `<option>`，而 `<optgroup>` 的标签
+ *   **不可选** —— 「全部订阅源」恰恰是那个必须可选的总项，所以分组这条路上限就到这儿了。
+ *   能把「这些是它的子项」表达出来的，只剩文本缩进。
+ * ★ 用 EM SPACE 而不是普通空格：后者在 `<option>` 里会被折叠掉（看着没有缩进）。
+ *   它在 `String.prototype.trim()` 的范围内，所以 e2e 量与断言拿到的仍是干净的名字。
+ * ★ 缩进要给**每一层子项**都加（GitHub 发现 + 各条 URL 源）：只缩其中一类的话，
+ *   等于又在下拉里画了条隐形的分组线，正好回到这次要拆掉的那个错觉。
+ */
+const SOURCE_INDENT = '\u2003'
+
 /** 一次安装要交给服务端的那几样东西（两个来源共用同一条路，只有取法不同） */
 interface InstallTarget {
   /** 正在装的那一行（按来源各自的行 key，只用来点亮按钮） */
@@ -669,10 +682,9 @@ export function PluginStore(): React.JSX.Element {
           }}
         >
           {/*
-            ★ 这一份是**平的**，不分 optgroup：「全部订阅源」是「上面这些的全集」，
-              而 GitHub 发现与各条 URL 源是同一层级的来源 —— 分组会让人以为它俩是两类东西
-              （「GitHub 发现」曾被单独摆进「社区」一组，正是这种错觉的来源）。
-              顺序固定为：全部 → GitHub 发现 → 各 URL 源，与「管理订阅源」里先卡片后列表一致。
+            ★ 层次只有一层：**全部订阅源**是「上面这些的全集」，其余每一项都是它的子项
+              （GitHub 发现与各条 URL 源是同一层级 —— 别把其中一类单独划出去，那正是
+              「它俩不是一类东西」那个错觉的来源，见 SOURCE_INDENT 的说明）。
           */}
           <option value="">全部订阅源</option>
           {/*
@@ -683,14 +695,12 @@ export function PluginStore(): React.JSX.Element {
               「已停用」这一格仍然可选 —— 停用是「不参与聚合」，不是「不许看」（与下面那些源一致）。
           */}
           <option value={GITHUB_DISCOVERY}>
-            {GITHUB_DISCOVERY_NAME}
-            {discoverySource.enabled ? '' : '（已停用）'}
+            {`${SOURCE_INDENT}${GITHUB_DISCOVERY_NAME}${discoverySource.enabled ? '' : '（已停用）'}`}
           </option>
           {sources.map((source) => (
             <option key={source.url} value={source.url}>
-              {source.name || source.url}
               {/* 停用的源不在聚合结果里，但单独看它是允许的 —— 标出来才不会被当成「源没了」 */}
-              {source.enabled ? '' : '（已停用）'}
+              {`${SOURCE_INDENT}${source.name || source.url}${source.enabled ? '' : '（已停用）'}`}
             </option>
           ))}
         </select>
