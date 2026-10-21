@@ -654,7 +654,9 @@ export function PluginStore(): React.JSX.Element {
         <div className="row">
           {/*
             右上角**不随来源换一套按钮**：选中「GitHub 发现」只是把范围收窄，不是进另一个页面，
-            为了它多长出一颗「GitHub Token」会让每切一次源按钮都挪一次。
+            为了它多长出一颗「GitHub Token」、或者把「刷新商店」改叫「刷新」，都会让每切一次源
+            按钮就跟着挪一次。所以两颗按钮的字面与顺序在所有来源下都是同一套，
+            只有「刷新实际上重取哪一半」按来源走。
             Token 配置在「管理订阅源」那张固定卡片里；Token 失效时，下面出错的那块另有
             「修改 Token」直接到对话框。
           */}
@@ -669,7 +671,7 @@ export function PluginStore(): React.JSX.Element {
             onClick={discoveryMode ? discovery.refresh : refresh}
           >
             <IconRefresh size={14} />
-            {discoveryMode ? '刷新' : '刷新商店'}
+            刷新商店
           </button>
         </div>
       </div>
