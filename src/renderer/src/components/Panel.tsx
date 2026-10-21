@@ -14,7 +14,7 @@ import { openMenuFromEvent } from './ContextMenu'
 import { buildSongMenuItems } from './songMenu'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
 import { displayArtist, formatDuration } from '@/lib/format'
-import { findScrollParent } from '@/lib/scroll'
+import { scrollRowIntoView, scrollRowToSlot } from '@/lib/scroll'
 import { usePlayer } from '@/state/usePlayer'
 import { useUi } from '@/state/useUi'
 
@@ -149,59 +149,21 @@ export function Queue({
   const listRef = useRef<HTMLDivElement>(null)
   const currentIndex = cursor >= 0 && cursor < order.length ? order[cursor] : -1
 
-  // 挂载（面板打开）与换曲时，把当前项摆到它该在的位置上
+  /*
+   * 挂载（面板打开）与换曲时，把当前项摆到它该在的位置上。
+   *
+   * ★ 两种落法，用途不同 —— 具体怎么算全在 lib/scroll.ts（那里有单测钉着坐标口径）：
+   *   · currentSlot = 0（抽屉）：只保证看得见，已经在视野里就一动不动（等价 block: 'nearest'）；
+   *   · currentSlot > 0（迷你面板）：**固定**落在从上往下第 currentSlot+1 格 —— 面板只有
+   *     416px 高，只保证「看得见」的话当前曲会贴着下边缘、甚至掉到视野之外。
+   * ★ 不用 scrollIntoView：它会把祖先容器连视口一起滚（迷你窗会被整条顶出窗外）。
+   */
   useEffect(() => {
     if (currentIndex < 0) return
-    const list = listRef.current
-    const item = list?.querySelector<HTMLElement>(`[data-queue-index="${currentIndex}"]`)
-    const container = findScrollParent(list ?? null)
-    if (!item || !container) return
-
-    /*
-     * ★ 自己算偏移，**不用 item.scrollIntoView()**（「能滚的祖先」怎么找见 lib/scroll.ts）：
-     *   那个 API 会把「它所有的祖先滚动容器」依次滚一遍，视口也在内。迷你窗只有 400×480，
-     *   而列表项在文档坐标里可能远在窗口下方（被 .mini-queue 剪掉的那些仍然占着文档坐标），
-     *   于是那一下会连着视口一起滚 —— 整条迷你播放器被顶出窗外，右上角那三颗窗口钮跟着不见。
-     *
-     * ★ 两种落法，用途不同：
-     *   · currentSlot = 0（抽屉）：只保证看得见 —— 在上方露不出来就贴顶、下方露不出来就贴底，
-     *     已经在视野里就一动不动（等价于 block: 'nearest'）。
-     *   · currentSlot > 0（迷你面板）：**固定**落在从上往下第 currentSlot+1 格，上面留出
-     *     currentSlot 行。面板只有 416px 高，只保证「看得见」的话当前曲会贴着下边缘、
-     *     甚至掉到视野之外。
-     *
-     * ★ 目标只用「项相对容器顶部的距离」算，**不牵扯可视高度**，也就不用自己夹上限
-     *   （给过大的值由引擎夹到 max）。这一点在迷你面板刚展开时是决定性的：那会儿窗口还没被
-     *   主进程加高，容器的 clientHeight 是 0，但列表是照自身高度铺开的，那个距离量得照样准；
-     *   等容器长起来，它正好停在第 currentSlot+1 格。反过来，若按可视高度去算（或先入为主地
-     *   认为「没高度就没法算」），算出来的就是 0 高度下的 0 —— 窗口一长高全错位，表现正是
-     *   「打开播放列表，当前曲却跑到下面看不见的地方」。
-     */
-    const cRect = container.getBoundingClientRect()
-    const iRect = item.getBoundingClientRect()
-    /** 当前项相对容器**滚动原点**的位置（与容器此刻有多高无关） */
-    const offset = container.scrollTop + (iRect.top - cRect.top)
-
-    let target: number
-    if (currentSlot > 0) {
-      target = offset - currentSlot * item.offsetHeight
-    } else {
-      const delta =
-        iRect.top < cRect.top
-          ? iRect.top - cRect.top
-          : iRect.bottom > cRect.bottom
-            ? iRect.bottom - cRect.bottom
-            : 0
-      if (delta === 0) return
-      target = offset + delta
-    }
-
-    /* 容器还没有高度时（迷你面板刚展开那一下）用即时跳转：那时做平滑动画没有意义，
-       而且动画可能被随后的尺寸变化打断，停在半路上。 */
-    container.scrollTo({
-      top: Math.max(0, target),
-      behavior: container.clientHeight > 0 ? 'smooth' : 'instant'
-    })
+    const item = listRef.current?.querySelector<HTMLElement>(`[data-queue-index="${currentIndex}"]`)
+    if (!item) return
+    if (currentSlot > 0) scrollRowToSlot(item, currentSlot)
+    else scrollRowIntoView(item)
   }, [currentIndex, currentSlot])
 
   if (queue.length === 0) {

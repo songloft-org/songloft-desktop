@@ -1,5 +1,5 @@
 /**
- * 列表里的「把某一项滚到看得见 / 滚到中间」。
+ * 列表里的「把某一项摆到该在的位置上」：居中 / 看得见 / 固定第几格。
  *
  * ★ 为什么自己找容器、自己算偏移，而**不用** `el.scrollIntoView()`：那个 API 会把
  *   「它所有的祖先滚动容器」依次滚一遍，视口也在内。两处都吃过这个坑：
@@ -8,7 +8,11 @@
  *     * 歌曲表：`.page-slot` 外面还套着 `.main-scroll`，多滚一层就把别人的位置也带走。
  *   所以这里只认「第一个真的能滚的祖先」，也只滚它一个。
  *
- * ★ 纯计算（centerTarget）与 DOM 分开写：前者能直接单测，不用任何环境垫片
+ * ★ 三个 target 函数都只吃一份几何（**视口坐标**量出来的），滚动坐标由它们自己换算。
+ *   这条分工是硬要求：混用两种坐标就会把 `scrollTop` 多算一遍 —— 队列抽屉踩过，
+ *   表现为「当前曲明明高亮了，却在视口上方四千像素的地方」。
+ *
+ * ★ 纯计算与 DOM 分开写：前者能直接单测，不用任何环境垫片
  *   （vitest 跑的是 node 环境，见 vitest.config.ts）。
  */
 
@@ -22,10 +26,10 @@ export function findScrollParent(el: HTMLElement | null): HTMLElement | null {
 }
 
 /**
- * 量出来的几何（一律是**视口坐标**，跟滚动位置无关的那几项单独标了）。
- * 这样写是为了让「算 target」这一步不必碰 DOM：调用方量一次、这里算一次。
+ * 量出来的几何。`containerTop` / `rowTop` 是**视口坐标**，其余是滚动坐标或尺寸 ——
+ * 换算只在下面那几个纯函数里做一次，调用方不要自己加加减减。
  */
-export interface CenterGeometry {
+export interface RowGeometry {
   /** 容器当前 scrollTop（滚动坐标） */
   scrollTop: number
   /** 容器顶部（视口坐标） */
@@ -40,50 +44,116 @@ export interface CenterGeometry {
   rowHeight: number
 }
 
+/** 目标项相对容器**滚动原点**的位置（与此刻滚到哪儿无关） */
+function offsetOf(g: RowGeometry): number {
+  return g.scrollTop + (g.rowTop - g.containerTop)
+}
+
+function maxScroll(g: RowGeometry): number {
+  return Math.max(0, g.scrollHeight - g.containerHeight)
+}
+
+/** 夹进可滚范围：滚到 0 或 max 就停，不会为了对齐而拉出一片空白 */
+function clampTop(top: number, g: RowGeometry): number {
+  return Math.min(Math.max(top, 0), maxScroll(g))
+}
+
 /**
  * 让目标项**居中**所需的 scrollTop。
- *
- * ★ 天然夹在 [0, max] 里，于是「当前曲靠近首尾」时不会滚出可滚范围 —— 浏览器
- *   本身也会夹，但这里显式夹是为了让调用方能拿这个值判断「要不要动」。
- *   这正是「不留空白占位」的全部实现：滚到 0 或 max 就停，不会为了居中而越界。
  *
  * ★ 项比容器还高时（窄窗口 + 一行很长）平均分的那半格是负数，会让行的顶部跑到
  *   容器顶上面去 —— 取 0 就是「行顶贴容器顶」，读起来才不别扭。
  */
-export function centerTarget(g: CenterGeometry): number {
-  const offset = g.scrollTop + (g.rowTop - g.containerTop)
+export function centerTarget(g: RowGeometry): number {
   const slack = Math.max(0, (g.containerHeight - g.rowHeight) / 2)
-  const max = Math.max(0, g.scrollHeight - g.containerHeight)
-  return Math.min(Math.max(offset - slack, 0), max)
+  return clampTop(offsetOf(g) - slack, g)
 }
 
 /**
- * 把 el 滚到它所在滚动容器的中间。
+ * 「看得见就行」（等价 `block: 'nearest'`）所需的 scrollTop；**已经整行在视野里就返回 null**
+ * （调用方据此决定「一动不动」，这也是它没有动画晃动的唯一来源）。
  *
- * 返回「有没有真的动」：调用方据此决定要不要接着做别的事（目前没人需要，
- * 但失败与「本来就在中间」是两件不同的事，别混成一个 void）。
+ * ★ 只看行与视口的那两条边，露不出来才补 —— 不是把行摆到某个固定位置。
  */
+export function nearestTarget(g: RowGeometry): number | null {
+  const viewTop = g.containerTop
+  const viewBottom = g.containerTop + g.containerHeight
+  if (g.rowTop >= viewTop && g.rowTop + g.rowHeight <= viewBottom) return null
+  /* 上方露不出来 → 行顶贴容器顶；下方露不出来 → 行底贴容器底 */
+  return g.rowTop < viewTop
+    ? clampTop(offsetOf(g), g)
+    : clampTop(offsetOf(g) + g.rowHeight - g.containerHeight, g)
+}
+
+/**
+ * 固定落在**从上往下第 slot+1 格**所需的 scrollTop（上面留出 slot 行）。
+ *
+ * ★ 迷你面板用它：面板只有 416px 高，只保证「看得见」的话当前曲会贴着下边缘、
+ *   甚至掉到视野之外。
+ * ★ 只按行高算，**不牵扯可视高度** —— 迷你面板刚展开时那个高度还是 0，但列表是照
+ *   自身高度铺开的，这个距离量得照样准；等容器长起来，它正好停在第 slot+1 格。
+ */
+export function slotTarget(g: RowGeometry, slot: number): number {
+  return clampTop(offsetOf(g) - Math.max(0, slot) * g.rowHeight, g)
+}
+
+/** 量一次：目标项 + 它的滚动容器 + 一份几何 */
+function measure(el: HTMLElement): { container: HTMLElement; geometry: RowGeometry } | null {
+  const container = findScrollParent(el)
+  if (!container) return null
+  const cRect = container.getBoundingClientRect()
+  const iRect = el.getBoundingClientRect()
+  return {
+    container,
+    geometry: {
+      scrollTop: container.scrollTop,
+      containerTop: cRect.top,
+      containerHeight: container.clientHeight,
+      scrollHeight: container.scrollHeight,
+      rowTop: iRect.top,
+      rowHeight: iRect.height
+    }
+  }
+}
+
+/** 把 el 滚到它所在滚动容器的中间。返回「有没有真的动」 */
 export function scrollToCenter(
   el: HTMLElement | null,
   behavior: ScrollBehavior = 'smooth'
 ): boolean {
-  const container = findScrollParent(el)
-  if (!el || !container) return false
+  const m = el ? measure(el) : null
   // 容器还没有布局高度（页面槽刚挂上、或整块被藏起来）时没法谈「中间」，等下一次
-  if (container.clientHeight <= 0) return false
+  if (!m || m.geometry.containerHeight <= 0) return false
+  const top = centerTarget(m.geometry)
+  if (Math.abs(top - m.container.scrollTop) < 1) return false
+  m.container.scrollTo({ top, behavior })
+  return true
+}
 
-  const cRect = container.getBoundingClientRect()
-  const iRect = el.getBoundingClientRect()
-  const top = centerTarget({
-    scrollTop: container.scrollTop,
-    containerTop: cRect.top,
-    containerHeight: container.clientHeight,
-    scrollHeight: container.scrollHeight,
-    rowTop: iRect.top,
-    rowHeight: iRect.height
-  })
+/** 只保证 el 看得见（已经在视野里就什么都不做）。返回「有没有真的动」 */
+export function scrollRowIntoView(
+  el: HTMLElement | null,
+  behavior: ScrollBehavior = 'smooth'
+): boolean {
+  const m = el ? measure(el) : null
+  if (!m || m.geometry.containerHeight <= 0) return false
+  const top = nearestTarget(m.geometry)
+  if (top === null) return false
+  m.container.scrollTo({ top, behavior })
+  return true
+}
 
-  if (Math.abs(top - container.scrollTop) < 1) return false
-  container.scrollTo({ top, behavior })
+/** 把 el 摆到从上往下第 slot+1 格（见 slotTarget） */
+export function scrollRowToSlot(
+  el: HTMLElement | null,
+  slot: number,
+  behavior?: ScrollBehavior
+): boolean {
+  const m = el ? measure(el) : null
+  if (!m) return false
+  /* 容器还没有高度时（迷你面板刚展开那一下）用即时跳转：那时做平滑动画没有意义，
+     而且动画可能被随后的尺寸变化打断，停在半路上。 */
+  const effective = behavior ?? (m.geometry.containerHeight > 0 ? 'smooth' : 'instant')
+  m.container.scrollTo({ top: slotTarget(m.geometry, slot), behavior: effective })
   return true
 }

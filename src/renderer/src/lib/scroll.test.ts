@@ -1,17 +1,21 @@
 /**
- * 「把当前曲滚到列表中间」的边界规则单测。
+ * 「把某一项摆到该在的位置上」的边界规则单测。
  *
  * 为什么值得单独测：这条逻辑在真实窗口里只表现为「跳了一下」或「没跳」，肉眼几乎
  * 分辨不出「跳对了」与「跳偏了一行」；而它的本质只是几处夹取 —— 首尾不能越界
- * （越界就是一片空白）、行比容器还高时不能把行顶推到容器外面。这些用用例钉住最省事。
+ * （越界就是一片空白）、行比容器还高时不能把行顶推到容器外面。
+ *
+ * ★ nearestTarget 那几条是**回归**用的：它早先把「相对滚动原点的距离」和「从当前位置
+ *   还要滚多少」加在了一起，于是 `scrollTop` 被多算一遍，队列抽屉开着时当前曲直接
+ *   被推到视口上方四千像素处（高亮还在，人却看不见）。
  */
 
 import { describe, expect, it } from 'vitest'
 
-import { centerTarget, type CenterGeometry } from './scroll'
+import { centerTarget, nearestTarget, slotTarget, type RowGeometry } from './scroll'
 
 /** 一个 800 高、内容 4000 长、每行 44 的容器（贴近主窗口里一张歌曲表） */
-function geometry(overrides: Partial<CenterGeometry> = {}): CenterGeometry {
+function geometry(overrides: Partial<RowGeometry> = {}): RowGeometry {
   return {
     scrollTop: 0,
     containerTop: 0,
@@ -51,5 +55,55 @@ describe('centerTarget', () => {
 
   it('内容装得下（压根不能滚）→ 0', () => {
     expect(centerTarget(geometry({ scrollHeight: 500, rowTop: 120 }))).toBe(0)
+  })
+})
+
+describe('nearestTarget', () => {
+  /* 队列抽屉的实测尺寸：容器 770 高、内容 10472 长、每行 52 */
+  const queue = (overrides: Partial<RowGeometry> = {}): RowGeometry =>
+    geometry({ containerHeight: 770, scrollHeight: 10472, rowHeight: 52, ...overrides })
+
+  it('行在下方露不出来 → 行底贴容器底（不是滚到列表最底）', () => {
+    const target = nearestTarget(queue({ rowTop: 5688 }))
+    expect(target).toBe(4970)
+    // 滚过去之后：行顶 718、行底 770 = 容器底，整行都看得见
+    expect(5688 - (target as number)).toBe(718)
+    expect(5688 + 52 - (target as number)).toBe(770)
+  })
+
+  it('★ 回归：同一个位置，换个 scrollTop 量出来必须是同一件事（不能把 scrollTop 多算一遍）', () => {
+    expect(nearestTarget(queue({ scrollTop: 4970, rowTop: 718 }))).toBeNull()
+  })
+
+  it('行在上方露不出来 → 行顶贴容器顶', () => {
+    expect(nearestTarget(queue({ scrollTop: 5000, rowTop: -200 }))).toBe(4800)
+  })
+
+  it('整行已经在视野里 → null（一动不动）', () => {
+    expect(nearestTarget(queue({ rowTop: 100 }))).toBeNull()
+    expect(nearestTarget(queue({ rowTop: 700 }))).toBeNull()
+  })
+
+  it('最后一行 → 正好停在「可滚到底」，不多不少', () => {
+    // 最后一行顶在 10420、行底 10472：贴底要滚 9702，而 9702 正是 max
+    expect(nearestTarget(queue({ rowTop: 10420 }))).toBe(9702)
+  })
+})
+
+describe('slotTarget', () => {
+  const mini = (overrides: Partial<RowGeometry> = {}): RowGeometry =>
+    geometry({ containerHeight: 416, scrollHeight: 4000, rowHeight: 52, ...overrides })
+
+  it('slot=2 → 目标项落在从上往下第 3 格，上面留出两行', () => {
+    const target = slotTarget(mini({ rowTop: 1000 }), 2)
+    expect(1000 - target).toBe(104)
+  })
+
+  it('slot=0 → 等价于行顶贴容器顶', () => {
+    expect(slotTarget(mini({ rowTop: 900 }), 0)).toBe(900)
+  })
+
+  it('容器还没有高度（刚展开）也照样算得出来：它只用行高', () => {
+    expect(slotTarget(mini({ rowTop: 900, containerHeight: 0 }), 2)).toBe(796)
   })
 })
