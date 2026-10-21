@@ -355,6 +355,14 @@ const PLUGIN_WIRE = [
 const pluginOrder = { order: ['radio-time', 'lyric-plus', 'douban-tags'] }
 /** 常驻白名单：只给其中一个，界面上那颗「常驻运行」要处于按下态 */
 const pluginKeepAlive = { plugins: ['lyric-plus'] }
+/**
+ * 「GitHub 发现」的共享凭据。
+ *
+ * 与订阅源那份**分开**存：它存在服务端的另一个设置项里（`/settings/github-discovery-token`），
+ * 而且界面刻意**不回填**它 —— 订阅源管理里那一行的输入框永远是空的，只在占位符里露出末尾四位。
+ * 给一份初始值，那一行才看得见「已配置（末尾 wxyz）」这个状态。
+ */
+let githubDiscoveryToken = 'ghp_e2eDiscoveryTokenWXYZ'
 
 /**
  * 订阅源。两个刻意一开一停：停用的那个在商店筛选下拉里要带「（已停用）」后缀，
@@ -590,6 +598,14 @@ function handlePlugins(req, res, path) {
       void readJsonBody(req).then((body) => {
         if (Array.isArray(body?.registries)) pluginRegistries.registries = body.registries
         json(res, 200, { ...pluginRegistries })
+      })
+  } else if (path === '/api/v1/settings/github-discovery-token') {
+    // 「GitHub 发现」那一条的凭据：与订阅源分开存，见 githubDiscoveryToken 的说明
+    if (method !== 'PUT') json(res, 200, { token: githubDiscoveryToken })
+    else
+      void readJsonBody(req).then((body) => {
+        githubDiscoveryToken = typeof body?.token === 'string' ? body.token : ''
+        json(res, 200, { token: githubDiscoveryToken })
       })
   } else if (/^\/api\/v1\/jsplugin\/[^/]+\/static\/.+$/.test(path)) {
     // 插件自己的静态资源（图标那一条免认证）：用 fixture 里那张真 JPEG 顶上

@@ -556,7 +556,39 @@ export interface AppSettings {
    *   「入口冲突」（警告要替换掉的其实是它自己）。
    */
   githubInstalls: GithubInstalls
+  /**
+   * 「GitHub 发现」这一条来源，在**订阅源列表**里的那一行。
+   *
+   * ★ 它不是服务端 registries 里的一条：后端拿 `url` 去 fetch，而这一档没有注册表文件
+   *   （由主进程按 `topic:songloft-plugin` 搜 GitHub 再逐个核对清单与 release）。
+   *   所以「列表里有没有它 / 开没开 / 叫什么」是这台机器的偏好，落在本地设置里；
+   *   **凭据仍在服务端**（`/settings/github-discovery-token`），同一台服务器上的客户端共用。
+   */
+  githubDiscovery: GithubDiscoverySource
 }
+
+/**
+ * 「GitHub 发现」在订阅源列表里的状态。
+ *
+ * 两档刻意分开，与 URL 源的语义一一对应：
+ *   · `present: false` —— 用户把它从列表里删了（要从「添加」里加回来，等价于 URL 源的移除）；
+ *   · `enabled: false` —— 还在列表里，只是不参与「全部订阅源」的聚合（等价于 URL 源的停用，
+ *     单独选中它仍然能看，因为那是用户明确指定的来源）。
+ */
+export interface GithubDiscoverySource {
+  present: boolean
+  enabled: boolean
+  /** 显示名；空串 = 用界面的默认名「GitHub 发现」（与 URL 源的「名称可留空」同一套口径） */
+  name: string
+}
+
+/**
+ * 「GitHub 发现」的默认显示名。
+ *
+ * 订阅源管理里它可以被改名（与 URL 源一样），但**下拉、提示、空态**都得有个名字可用，
+ * 所以默认值只在这一处定义 —— 三处各写一份「GitHub 发现」，迟早有一处会漏改。
+ */
+export const GITHUB_DISCOVERY_NAME = 'GitHub 发现'
 
 export const DEFAULT_SETTINGS: AppSettings = {
   activeServerUrl: null,
@@ -608,7 +640,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastQueueContext: null,
   recentSongIds: [],
   // 没装过任何 GitHub 插件时是空的；老配置读回来由 { ...DEFAULT_SETTINGS, ...persisted } 补齐
-  githubInstalls: {}
+  githubInstalls: {},
+  // 默认就在列表里、且参与聚合 —— 与这次改造之前的行为一致（那时它无条件出现）
+  githubDiscovery: { present: true, enabled: true, name: '' }
 }
 
 export interface ServerEntry {

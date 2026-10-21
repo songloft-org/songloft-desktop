@@ -82,6 +82,15 @@ export class ConfigStore {
        */
       if (!PLAY_MODES.includes(settings.playMode)) settings.playMode = DEFAULT_SETTINGS.playMode
       /*
+       * 对象型的设置项要**逐项**归一：上面那次展开是浅的，老配置里若只存了半截
+       * （例如只有 `present`），缺的那两档就是 undefined —— 界面拿到之后分不清
+       * 「停用」与「根本没这个字段」，而这两者的表现正好相反（一个是留着不搜，一个是压根不出现）。
+       */
+      settings.githubDiscovery = {
+        ...DEFAULT_SETTINGS.githubDiscovery,
+        ...persisted.githubDiscovery
+      }
+      /*
        * 迷你窗那两块面板从前**共用**一份底色浓度与高度，现在各存一份（见 AppSettings）：
        * 老配置里那两个单份的值接给两块 —— 用户拖出来的高度、调好的浓度不该因为这次拆分被打回
        * 默认值。

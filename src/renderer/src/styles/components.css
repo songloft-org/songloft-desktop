@@ -4323,11 +4323,14 @@ html[data-mini='true'] .toasts {
   gap: 6px;
 }
 
-/* 新增那一行：名称 + 地址 + 添加。align-items: center 是为了让 29px 的按钮
-   落在 38px 输入的垂直中线上，不然后者会把按钮顶到偏上 */
+/* 新增那一行：类型 + 名称 + 地址 + 添加。
+   ★ 类型那一格是 auto：「订阅源」与「GitHub 发现」两个词都不长，按内容宽度就够，
+     给多了会把真正要读的地址挤窄。
+   align-items: center 是为了让 29px 的按钮落在 38px 输入的垂直中线上，
+   不然后者会把按钮顶到偏上 */
 .source-add {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.8fr) auto;
   gap: 10px;
   align-items: center;
 }
