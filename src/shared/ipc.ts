@@ -568,18 +568,15 @@ export interface AppSettings {
 }
 
 /**
- * 「GitHub 发现」在订阅源列表里的状态。
+ * 「GitHub 发现」这一条来源的状态。
  *
- * 两档刻意分开，与 URL 源的语义一一对应：
- *   · `present: false` —— 用户把它从列表里删了（要从「添加」里加回来，等价于 URL 源的移除）；
- *   · `enabled: false` —— 还在列表里，只是不参与「全部订阅源」的聚合（等价于 URL 源的停用，
- *     单独选中它仍然能看，因为那是用户明确指定的来源）。
+ * ★ 只有「开 / 关」一维：它在订阅源管理里是**固定卡片、不可删除**（见 RegistrySourcesDialog）——
+ *   它不是某个可以换掉的第三方源，也没有注册表地址；能改的只有「参不参与聚合搜索」。
+ *   所以既没有「在不在列表里」，也没有「叫什么」（名字固定是 `GITHUB_DISCOVERY_NAME`）。
  */
 export interface GithubDiscoverySource {
-  present: boolean
+  /** 参与「全部订阅源」的聚合搜索吗（关掉之后单独选中它仍然能看，与 URL 源的停用同义） */
   enabled: boolean
-  /** 显示名；空串 = 用界面的默认名「GitHub 发现」（与 URL 源的「名称可留空」同一套口径） */
-  name: string
 }
 
 /**
@@ -641,8 +638,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   recentSongIds: [],
   // 没装过任何 GitHub 插件时是空的；老配置读回来由 { ...DEFAULT_SETTINGS, ...persisted } 补齐
   githubInstalls: {},
-  // 默认就在列表里、且参与聚合 —— 与这次改造之前的行为一致（那时它无条件出现）
-  githubDiscovery: { present: true, enabled: true, name: '' }
+  // 默认开启：与改造之前的行为一致（那时它无条件参与聚合搜索）
+  githubDiscovery: { enabled: true }
 }
 
 export interface ServerEntry {

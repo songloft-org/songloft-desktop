@@ -1,15 +1,15 @@
 /**
  * 「管理订阅源」对话框 —— 扩展商店里的列表从哪些源来。
  *
- * 两种源在**同一张表**里管理（开关 / 改名 / 移除 / Token 都一样），只是取值的地方不同：
- *   * URL 源：服务端 `GET|PUT /settings/plugin-registries`，地址就是身份；
- *   * **GitHub 发现**：没有注册表地址 —— 由主进程按 `topic:songloft-plugin` 搜 GitHub，
- *     再逐个核对清单与 release（见 hooks/useGithubDiscovery）。它**不进**服务端那份
- *     registries（后端会拿 `url` 去 fetch），所以「在不在列表里 / 开没开 / 叫什么」
- *     落在本地设置（`AppSettings.githubDiscovery`），Token 仍在服务端
- *     （`/settings/github-discovery-token`，同一台服务器上的客户端共用一份）。
+ * 界面分两块，因为这两块**可以做的操作不一样**：
+ *   * 上方**固定卡片**：`GitHub 发现`。它没有注册表地址（按 GitHub 上的 topic 搜仓库，
+ *     再逐个核对清单与 release，见 hooks/useGithubDiscovery），所以既不能改地址、
+ *     也不能删掉 —— 只能开关，以及配一个 Token。**固定显示、不可删除**是刻意的：
+ *     它不是某个可以换掉的第三方源，而是商店内置的另一半来源。
+ *   * 下方**源列表**：URL 源（`GET|PUT /settings/plugin-registries`）。地址就是身份，
+ *     可以增删、停用、改名、配私有源 Token。
  *
- * 后端只有「整表读 / 整表写」两个口子，没有单条增删改，所以这里是一张**草稿表**：
+ * 后端只有「整表读 / 整表写」两个口子，没有单条增删改，所以 URL 源这一半是**草稿表**：
  * 所有编辑都先在本地改，点保存才整份 PUT 回去。于是「删一个源」= 保存时不带它、
  * 「停用」= `enabled: false`、「改地址」= 换掉那一行的 url。
  *
@@ -24,7 +24,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { getGithubDiscoveryToken, setGithubDiscoveryToken } from '@/api/endpoints'
 import { getPluginRegistries, updatePluginRegistries, type RegistrySource } from '@/api/plugins'
-import { GITHUB_DISCOVERY_NAME, type GithubDiscoverySource } from '@shared/ipc'
+import { GITHUB_DISCOVERY_NAME } from '@shared/ipc'
 import {
   IconAlert,
   IconClose,
@@ -51,32 +51,23 @@ export interface RegistrySourcesDialogProps {
   onSaved: () => void
 }
 
-/**
- * 草稿表里的一行。
- *
- * 两种源在这一层是**同一种东西**（有名字、有开关、能移除），差别只有「地址与 Token 从哪儿来」——
- * 差别收在 `kind` 里，界面就能按同一套结构画，用户也就不必在两处学两套操作。
- */
-type DraftRow =
-  | { kind: 'url'; url: string; name: string; enabled: boolean; token: string }
-  | { kind: 'github'; name: string; enabled: boolean }
+/** 草稿表里的一行（只有 URL 源 —— GitHub 那一档是上方那张固定卡片，不进这张表） */
+type DraftRow = { url: string; name: string; enabled: boolean; token: string }
 
 /** 地址必须是 http(s)：后端要拿它去 fetch，别的写法只会得到一条「拉取注册表失败」 */
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value.trim())
 }
 
-/** 一行在界面上怎么称呼（无名时退回地址，GitHub 那行退回默认名） */
+/** 一行在界面上怎么称呼（无名时退回地址） */
 function rowLabel(row: DraftRow): string {
-  if (row.name.trim()) return row.name.trim()
-  return row.kind === 'github' ? GITHUB_DISCOVERY_NAME : row.url.trim() || '未命名'
+  return row.name.trim() || row.url.trim() || '未命名'
 }
 
 /** 保存前的整表检查。返回第一处问题（没有则 null）——一次只说一条，说了就改，不必看清单 */
 function findProblem(rows: DraftRow[]): string | null {
   const seen = new Set<string>()
   for (const row of rows) {
-    if (row.kind !== 'url') continue
     const url = row.url.trim()
     if (!isHttpUrl(url)) {
       return `「${rowLabel(row)}」的地址要以 http:// 或 https:// 开头`
@@ -87,8 +78,22 @@ function findProblem(rows: DraftRow[]): string | null {
   return null
 }
 
-/** GitHub 那一行的「地址」格：它没有注册表文件，写清楚它在搜什么 */
-const GITHUB_ADDRESS = 'github.com · topic:songloft-plugin'
+/**
+ * 一眼就不像 GitHub Token 的写法，拦在保存之前。
+ *
+ * ★ 只拦**明显不对**的那几种（带空白、太短、混了别的字符）。合法的判定只有 GitHub 自己能做，
+ *   而校验写太严会把 fine-grained Token（`github_pat_…`，比老式的长得多）一起拦掉 ——
+ *   那正是最需要人配 Token 的那类用户。留空表示「不改动」，不是错误。
+ */
+function checkGithubToken(value: string): string | null {
+  const token = value.trim()
+  if (!token) return null
+  if (/\s/.test(token)) return 'Token 里不能有空格或换行（粘贴时容易带上）'
+  if (!/^[A-Za-z0-9_]{20,}$/.test(token)) {
+    return '这不像 GitHub Token：应以 ghp_ 或 github_pat_ 开头，且只含字母、数字与下划线'
+  }
+  return null
+}
 
 export function RegistrySourcesDialog({
   onClose,
@@ -104,16 +109,20 @@ export function RegistrySourcesDialog({
   const [problem, setProblem] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  /** 服务端上的 GitHub Token（null = 还没读到 / 读失败；空串 = 没配置） */
+  /* ── GitHub 那张固定卡片 ── */
+  /** 草稿：开关与 Token 都和 URL 源一起在「保存」时才落地 */
+  const [discoveryEnabled, setDiscoveryEnabled] = useState(true)
+  /** 服务端上的 Token（null = 还没读到 / 读失败；空串 = 没配置） */
   const [serverToken, setServerToken] = useState<string | null>(null)
   const [tokenError, setTokenError] = useState<string | null>(null)
   /** 用户新填的 Token。**不回填**，见文件头第 3 条 */
   const [tokenDraft, setTokenDraft] = useState('')
   /** 明确要清掉服务端那份（与「留空 = 不改」区分开） */
   const [tokenCleared, setTokenCleared] = useState(false)
+  /** Token 的格式问题：显示在输入框下面，不混进整表那条错误里 */
+  const [tokenProblem, setTokenProblem] = useState<string | null>(null)
 
-  /* 添加区：先选类型，再填该类型用得上的那几格 */
-  const [addKind, setAddKind] = useState<'url' | 'github'>('url')
+  /* 添加区（只加 URL 源：GitHub 那一档固定存在，加不出第二个） */
   const [draftName, setDraftName] = useState('')
   const [draftUrl, setDraftUrl] = useState('')
 
@@ -122,11 +131,12 @@ export function RegistrySourcesDialog({
     setRows(null)
     setLoadError(null)
     setTokenError(null)
+    setTokenProblem(null)
     setServerToken(null)
     setTokenDraft('')
     setTokenCleared(false)
     /*
-     * 两张表一起读：订阅源在服务端，GitHub 那条「在不在 / 开没开」在本地设置。
+     * 两张表一起读：URL 源在服务端，GitHub 那一档的开关在本地设置。
      * Token 单独一路读，**失败不阻断**：Token 读不到只影响占位符里那句话，
      * 而整张表读不到就什么都改不了 —— 两件事的重量差得远。
      */
@@ -142,22 +152,15 @@ export function RegistrySourcesDialog({
     ])
       .then(([list, token]) => {
         setServerToken(token)
-        const next: DraftRow[] = list.map((source: RegistrySource) => ({
-          kind: 'url',
-          url: source.url,
-          name: source.name,
-          enabled: source.enabled,
-          token: source.token
-        }))
-        /*
-         * GitHub 那一行排在最后：它不参与聚合顺序（后端那份表才有先后），
-         * 放在末尾既不会打乱用户已有的源，也符合「另一类来源」的直觉。
-         */
-        const discovery = useSettings.getState().settings.githubDiscovery
-        if (discovery.present) {
-          next.push({ kind: 'github', name: discovery.name, enabled: discovery.enabled })
-        }
-        setRows(next)
+        setDiscoveryEnabled(useSettings.getState().settings.githubDiscovery.enabled)
+        setRows(
+          list.map((source: RegistrySource) => ({
+            url: source.url,
+            name: source.name,
+            enabled: source.enabled,
+            token: source.token
+          }))
+        )
       })
       .catch((reason: unknown) => {
         setLoadError(reason instanceof Error ? reason.message : '订阅源读取失败')
@@ -168,9 +171,11 @@ export function RegistrySourcesDialog({
     load()
   }, [load])
 
-  const updateRow = (index: number, change: (row: DraftRow) => DraftRow): void => {
+  const updateRow = (index: number, next: Partial<DraftRow>): void => {
     setProblem(null)
-    setRows((list) => (list ? list.map((row, i) => (i === index ? change(row) : row)) : list))
+    setRows((list) =>
+      list ? list.map((row, i) => (i === index ? { ...row, ...next } : row)) : list
+    )
   }
 
   const removeAt = (index: number): void => {
@@ -186,27 +191,16 @@ export function RegistrySourcesDialog({
    */
   const addDraft = (): void => {
     if (!rows) return
-    if (addKind === 'github') {
-      if (rows.some((row) => row.kind === 'github')) {
-        setProblem(`「${GITHUB_DISCOVERY_NAME}」已经在列表里了`)
-        return
-      }
-      setRows([...rows, { kind: 'github', name: draftName.trim(), enabled: true }])
-      setDraftName('')
-      setProblem(null)
-      return
-    }
-
     const url = draftUrl.trim()
     if (!isHttpUrl(url)) {
       setProblem('订阅源地址要以 http:// 或 https:// 开头')
       return
     }
-    if (rows.some((row) => row.kind === 'url' && row.url.trim() === url)) {
+    if (rows.some((row) => row.url.trim() === url)) {
       setProblem('这个地址已经在列表里了：地址是订阅源的身份，不能重复')
       return
     }
-    setRows([...rows, { kind: 'url', url, name: draftName.trim(), enabled: true, token: '' }])
+    setRows([...rows, { url, name: draftName.trim(), enabled: true, token: '' }])
     setDraftName('')
     setDraftUrl('')
     setProblem(null)
@@ -216,32 +210,27 @@ export function RegistrySourcesDialog({
    * 保存。
    *
    * 三件事各有一个落点（服务端订阅源 / 服务端 Token / 本地偏好），**逐个做、逐个记账**：
-   * 任何一步失败都不回退已经成功的那几步（后端那两个接口没有事务），但必须把「哪一步没成」
+   * 任何一步失败都不回退已经成功的那几步（那两个服务端接口没有事务），但必须把「哪一步没成」
    * 说清楚 —— 笼统一句「保存失败」会让人再点一次，而对已经生效的那部分又是一次无谓的覆盖。
    */
   const save = (): void => {
     if (!client || !rows) return
+
     const found = findProblem(rows)
     if (found) {
       setProblem(found)
       return
     }
-
-    const urlRows = rows.filter((row) => row.kind === 'url')
-    const githubRow = rows.find(
-      (row): row is Extract<DraftRow, { kind: 'github' }> => row.kind === 'github'
-    )
-    /* 删掉之后也要把开关与名字记下来：下次加回来时还是用户上次的意思 */
-    const previous = useSettings.getState().settings.githubDiscovery
-    const nextDiscovery: GithubDiscoverySource = {
-      present: githubRow != null,
-      enabled: githubRow ? githubRow.enabled : previous.enabled,
-      name: githubRow ? githubRow.name.trim() : previous.name
+    const tokenIssue = checkGithubToken(tokenDraft)
+    if (tokenIssue) {
+      setTokenProblem(tokenIssue)
+      return
     }
-    const nextToken = tokenCleared ? '' : tokenDraft.trim()
 
+    const nextToken = tokenCleared ? '' : tokenDraft.trim()
     setSaving(true)
     setProblem(null)
+    setTokenProblem(null)
     void (async () => {
       const failures: string[] = []
 
@@ -249,7 +238,7 @@ export function RegistrySourcesDialog({
         // 整表 PUT 之前统一 trim：地址前后带空格是最常见的粘贴事故，而后端会拿它当身份比对
         await updatePluginRegistries(
           client,
-          urlRows.map((row) => ({
+          rows.map((row) => ({
             url: row.url.trim(),
             name: row.name.trim(),
             enabled: row.enabled,
@@ -288,7 +277,7 @@ export function RegistrySourcesDialog({
       }
 
       try {
-        await patchSettings({ githubDiscovery: nextDiscovery })
+        await patchSettings({ githubDiscovery: { enabled: discoveryEnabled } })
       } catch (reason) {
         failures.push(`本地设置没有保存：${reason instanceof Error ? reason.message : '未知错误'}`)
       }
@@ -300,23 +289,27 @@ export function RegistrySourcesDialog({
       }
 
       onSaved()
-      toast(
-        githubRow
-          ? `已保存 ${urlRows.length} 个订阅源 +「${rowLabel(githubRow)}」`
-          : `已保存 ${urlRows.length} 个订阅源`,
-        'success'
-      )
+      toast(`已保存 ${rows.length} 个订阅源`, 'success')
       onClose()
     })()
   }
 
-  /** GitHub 那一格输入框的提示：三种状态都写在里面，省得另外摆一行说明 */
+  /** Token 那一格输入框的提示：几种状态都写在里面，省得另外摆一行说明 */
   const tokenPlaceholder = (): string => {
     if (tokenCleared) return '保存后会清除 Token（想改成新的就直接填）'
     if (tokenDraft.trim()) return '将保存为新的 GitHub Token'
     if (tokenError) return `读取失败（${tokenError}），填一个即可覆盖`
     if (serverToken) return `已配置（末尾 ${serverToken.slice(-4)}），留空表示不修改`
-    return 'GitHub Token（留空 = 匿名，每小时只有 60 次）'
+    return '未配置：粘贴一个 GitHub Token，留空 = 匿名访问'
+  }
+
+  /** 卡片右上角那枚状态徽标 */
+  const tokenBadge = (): { text: string; accent: boolean } => {
+    if (tokenCleared) return { text: 'Token 将清除', accent: false }
+    if (tokenDraft.trim()) return { text: 'Token 待保存', accent: true }
+    if (tokenError) return { text: 'Token 读取失败', accent: false }
+    if (serverToken) return { text: `Token 已配置 · 末尾 ${serverToken.slice(-4)}`, accent: true }
+    return { text: '未配置 Token', accent: false }
   }
 
   const body = (): React.ReactNode => {
@@ -348,7 +341,7 @@ export function RegistrySourcesDialog({
       )
     }
 
-    const hasGithub = rows.some((row) => row.kind === 'github')
+    const badge = tokenBadge()
 
     return (
       <>
@@ -359,11 +352,88 @@ export function RegistrySourcesDialog({
           </div>
         ) : null}
 
+        {/*
+          ★ 固定卡片：只开关、不增删。
+            它与下面那些源**并列**（同一栏里的另一种来源），但操作少一档是刻意的 ——
+            没有注册表地址就没有「换一个地址」这回事，删掉它也没有「再加回来」的语义
+            （它不属于任何第三方源）。把它做成可删的行，用户会以为删了就能腾掉什么。
+        */}
+        <div className="source-pinned" data-enabled={discoveryEnabled}>
+          <Switch
+            checked={discoveryEnabled}
+            ariaLabel={`启用 ${GITHUB_DISCOVERY_NAME}`}
+            onChange={(next) => {
+              setProblem(null)
+              setDiscoveryEnabled(next)
+            }}
+          />
+
+          <div className="source-fields">
+            <div className="source-pinned-head">
+              <span className="source-pinned-title">{GITHUB_DISCOVERY_NAME}</span>
+              <span className="badge">{discoveryEnabled ? '参与聚合搜索' : '已停用'}</span>
+              <span className="badge" data-tone={badge.accent ? 'accent' : undefined}>
+                {badge.text}
+              </span>
+            </div>
+
+            <input
+              className="input"
+              value={tokenDraft}
+              placeholder={tokenPlaceholder()}
+              spellCheck={false}
+              autoComplete="off"
+              aria-label="GitHub Token"
+              onChange={(event) => {
+                // 一动手填就把「清除」撤掉：填了新值当然不再是要删的那份
+                setTokenCleared(false)
+                setTokenProblem(null)
+                setTokenDraft(event.target.value)
+              }}
+            />
+
+            {tokenProblem ? (
+              <p className="source-pinned-error" role="alert">
+                {tokenProblem}
+              </p>
+            ) : null}
+
+            <p className="field-hint" style={{ margin: 0 }}>
+              {
+                '这一档没有订阅源地址：按 GitHub 上的 songloft-plugin topic 搜仓库，再逐个核对清单与 release。'
+              }
+              {'匿名访问每小时只有 60 次（一页发现就可能用光），配上 Token 提到 5000 次；'}
+              {
+                'Token 保存在当前连接的服务器上，连接它的客户端共用一份，出于安全不回填、只显示末尾四位。'
+              }
+            </p>
+          </div>
+
+          <div className="row" style={{ gap: 6 }}>
+            {/* 只有真有一份可清（或已经点了清除）时才出现：没有 Token 时那颗按钮没有含义 */}
+            {serverToken || tokenCleared ? (
+              <button
+                type="button"
+                className="icon-btn"
+                data-tip={tokenCleared ? '撤销清除' : '清除 Token'}
+                aria-label={tokenCleared ? '撤销清除 GitHub Token' : '清除 GitHub Token'}
+                onClick={() => {
+                  setTokenCleared((current) => !current)
+                  setTokenDraft('')
+                  setTokenProblem(null)
+                }}
+              >
+                {tokenCleared ? <IconRefresh size={16} /> : <IconClose size={16} />}
+              </button>
+            ) : null}
+          </div>
+        </div>
+
         {rows.length === 0 ? (
           <div className="probe-result">
             <IconStore size={15} />
             <span>
-              一个订阅源都没有 —— 插件商店会是空的。在下面加一个（也可以加「GitHub 发现」）。
+              一个 URL 源都没有 —— 商店只会显示「{GITHUB_DISCOVERY_NAME}」那一半。在下面加一个。
             </span>
           </div>
         ) : null}
@@ -378,139 +448,54 @@ export function RegistrySourcesDialog({
             <Switch
               checked={row.enabled}
               ariaLabel={`启用 ${rowLabel(row)}`}
-              onChange={(next) => updateRow(index, (current) => ({ ...current, enabled: next }))}
+              onChange={(next) => updateRow(index, { enabled: next })}
             />
 
             <div className="source-fields">
               <input
                 className="input"
                 value={row.name}
-                /*
-                 * 留空的含义两种源不一样，所以提示语也得跟着变：URL 源会退回显示地址本身
-                 * （「这到底是哪个源」全靠那串地址认），而 GitHub 那一档没有地址可退回。
-                 */
-                placeholder={
-                  row.kind === 'github'
-                    ? `名称（可留空，默认「${GITHUB_DISCOVERY_NAME}」）`
-                    : '名称（可留空）'
-                }
+                placeholder="名称（可留空）"
                 spellCheck={false}
                 aria-label="订阅源名称"
-                onChange={(event) =>
-                  updateRow(index, (current) => ({ ...current, name: event.target.value }))
-                }
+                onChange={(event) => updateRow(index, { name: event.target.value })}
               />
-
-              {row.kind === 'url' ? (
-                <input
-                  className="input"
-                  value={row.url}
-                  placeholder="订阅源地址，如 https://example.com/registry.json"
-                  spellCheck={false}
-                  aria-label="订阅源地址"
-                  onChange={(event) =>
-                    updateRow(index, (current) =>
-                      current.kind === 'url' ? { ...current, url: event.target.value } : current
-                    )
-                  }
-                />
-              ) : (
-                /*
-                 * GitHub 那一行没有地址可填，但**这一格不能少**：少了之后它的 Token 会顶到
-                 * 地址的位置上，两种源的行看起来就不是一套东西了。只读框写清它在搜什么。
-                 */
-                <input
-                  className="input"
-                  value={GITHUB_ADDRESS}
-                  readOnly
-                  aria-label="订阅源地址"
-                  title="「GitHub 发现」没有注册表文件：按 topic 搜 GitHub，再逐个核对清单与 release"
-                  style={{ color: 'var(--text-3)' }}
-                />
-              )}
-
-              {row.kind === 'url' ? (
-                <input
-                  className="input"
-                  value={row.token}
-                  placeholder="私有源 Token（公开源留空）"
-                  spellCheck={false}
-                  autoComplete="off"
-                  aria-label="订阅源 Token"
-                  onChange={(event) =>
-                    updateRow(index, (current) =>
-                      current.kind === 'url' ? { ...current, token: event.target.value } : current
-                    )
-                  }
-                />
-              ) : (
-                <input
-                  className="input"
-                  value={tokenDraft}
-                  placeholder={tokenPlaceholder()}
-                  spellCheck={false}
-                  autoComplete="off"
-                  aria-label="GitHub Token"
-                  onChange={(event) => {
-                    // 一动手填就把「清除」撤掉：填了新值当然不再是要删的那份
-                    setTokenCleared(false)
-                    setTokenDraft(event.target.value)
-                  }}
-                />
-              )}
+              <input
+                className="input"
+                value={row.url}
+                placeholder="订阅源地址，如 https://example.com/registry.json"
+                spellCheck={false}
+                aria-label="订阅源地址"
+                onChange={(event) => updateRow(index, { url: event.target.value })}
+              />
+              <input
+                className="input"
+                value={row.token}
+                placeholder="私有源 Token（公开源留空）"
+                spellCheck={false}
+                autoComplete="off"
+                aria-label="订阅源 Token"
+                onChange={(event) => updateRow(index, { token: event.target.value })}
+              />
             </div>
 
-            <div className="row" style={{ gap: 6 }}>
-              {/* 只有 GitHub 那行有「清除」：别的源的 Token 是回填明文的，清空输入框就是清除 */}
-              {row.kind === 'github' && (serverToken || tokenCleared) ? (
-                <button
-                  type="button"
-                  className="icon-btn"
-                  data-tip={tokenCleared ? '撤销清除' : '清除 Token'}
-                  aria-label={tokenCleared ? '撤销清除 GitHub Token' : '清除 GitHub Token'}
-                  onClick={() => {
-                    setTokenCleared((current) => !current)
-                    setTokenDraft('')
-                  }}
-                >
-                  {tokenCleared ? <IconRefresh size={16} /> : <IconClose size={16} />}
-                </button>
-              ) : null}
-
-              <button
-                type="button"
-                className="icon-btn"
-                data-tip="移除这个源"
-                aria-label={`移除 ${rowLabel(row)}`}
-                onClick={() => removeAt(index)}
-              >
-                <IconTrash size={16} />
-              </button>
-            </div>
+            <button
+              type="button"
+              className="icon-btn"
+              data-tip="移除这个源"
+              aria-label={`移除 ${rowLabel(row)}`}
+              onClick={() => removeAt(index)}
+            >
+              <IconTrash size={16} />
+            </button>
           </div>
         ))}
 
         <div className="source-add">
-          <select
-            className="input"
-            value={addKind}
-            aria-label="新订阅源类型"
-            onChange={(event) => {
-              setAddKind(event.target.value === 'github' ? 'github' : 'url')
-              setProblem(null)
-            }}
-          >
-            <option value="url">订阅源</option>
-            <option value="github">{GITHUB_DISCOVERY_NAME}</option>
-          </select>
           <input
             className="input"
             value={draftName}
-            placeholder={
-              addKind === 'github'
-                ? `名称（可留空，默认「${GITHUB_DISCOVERY_NAME}」）`
-                : '新源的名称（可留空）'
-            }
+            placeholder="新源的名称（可留空）"
             spellCheck={false}
             aria-label="新订阅源名称"
             onChange={(event) => setDraftName(event.target.value)}
@@ -518,30 +503,16 @@ export function RegistrySourcesDialog({
           <input
             className="input"
             value={draftUrl}
-            placeholder={
-              addKind === 'github'
-                ? '这一档没有注册表地址'
-                : '新源的地址，如 https://example.com/registry.json'
-            }
+            placeholder="新源的地址，如 https://example.com/registry.json"
             spellCheck={false}
             aria-label="新订阅源地址"
-            // 选了 GitHub 发现之后地址就不该能填：它没有注册表文件，填了也不会被用上
-            disabled={addKind === 'github'}
             onChange={(event) => setDraftUrl(event.target.value)}
             onKeyDown={(event) => {
               // 回车=添加：这一行本来就是「填完就走」，再挪去点按钮是多余的一步
               if (event.key === 'Enter') addDraft()
             }}
           />
-          <button
-            type="button"
-            className="btn"
-            data-size="sm"
-            // 已经在列表里了就没什么可加的 —— 按住它比让用户点完再告诉他要清楚
-            disabled={addKind === 'github' && hasGithub}
-            data-tip={addKind === 'github' && hasGithub ? '已经在列表里了' : undefined}
-            onClick={addDraft}
-          >
+          <button type="button" className="btn" data-size="sm" onClick={addDraft}>
             <IconPlus size={14} />
             添加
           </button>
@@ -549,10 +520,8 @@ export function RegistrySourcesDialog({
 
         <p className="field-hint">
           地址就是这个源的身份（后端靠它匹配条目、查它自己的 Token），改地址等于换一个源。 Token
-          非空的源按私有源处理：它的条目下载时会带上 Bearer 认证。 「{GITHUB_DISCOVERY_NAME}
-          」没有注册表地址 —— 它按 GitHub 上的 topic 搜仓库再逐个核对，Token
-          存在服务器上、连接它的客户端共用一份（出于安全不回填，只露末尾四位）。
-          停用的源不参与「全部订阅源」的聚合搜索，但单独选中它仍然能看。
+          非空的源按私有源处理：它的条目下载时会带上 Bearer 认证。
+          停用的源不参与「全部订阅源」的聚合搜索， 但单独选中它仍然能看。
         </p>
       </>
     )

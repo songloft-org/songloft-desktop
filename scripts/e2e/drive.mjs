@@ -607,6 +607,11 @@ window.__t = {
     storeSources: vis('select[aria-label="筛选订阅源"] option').map((e) =>
       (e.textContent || '').trim()
     ),
+    /** 订阅源对话框里那张固定卡片（「GitHub 发现」：不可删除，只有开关与 Token） */
+    discoveryCards: vis('.source-pinned').length,
+    discoveryCardTitle: vis('.source-pinned .source-pinned-title')[0]?.textContent ?? '',
+    discoveryCardOn: vis('.source-pinned .switch[aria-checked="true"]').length,
+    discoveryTokenHint: vis('.source-pinned input[aria-label="GitHub Token"]')[0]?.placeholder ?? '',
     /** 订阅源对话框里的源行数（每行一颗开关 + 三个输入框 + 移除） */
     sourceRows: vis('.source-row').length,
     /**
@@ -1251,13 +1256,14 @@ const STEPS = [
     }
   ],
   /*
-   * 订阅源管理弹窗：两个 URL 源一开一停，外加「GitHub 发现」那条（默认就在列表里，
-   * 与 URL 源同一套行结构 —— 开关 / 名称 / 地址 / Token / 移除）。
-   * 断言的是「行数 + 源名 + 地址 + 标题」：
-   * 读不到配置时这里会是空的，而空列表与「本来就没配」长得一模一样，
-   * 所以 mock 里那两个源是刻意配上的。
-   * ★ 第三行的名字是**空串**（留空 = 用默认名「GitHub 发现」），地址格里是只读说明 ——
-   *   这两条一起证明它走的是同一条渲染路径，而不是另画了半行。
+   * 订阅源管理弹窗：两块内容，断言也分开。
+   *
+   * 一、上方那张**固定卡片**（「GitHub 发现」）：不可删除，只有开关与 Token。
+   *     这里连标题、开关默认态、Token 占位符一起断言 —— 占位符里那句「已配置（末尾 WXYZ）」
+   *     同时证明了两件事：Token 从服务端读到了，且**没有回填进输入框**（否则 value 非空、占位符不显示）。
+   * 二、下方两个 URL 源：一开一停。
+   *     读不到配置时这里会是空的，而空列表与「本来就没配」长得一模一样，
+   *     所以 mock 里那两个源是刻意配上的。
    */
   [
     '44-extensions-registries',
@@ -1266,9 +1272,13 @@ const STEPS = [
     {
       modals: exactly(1),
       modalTitle: exactly('管理订阅源'),
-      sourceRows: exactly(3),
-      sourceNames: equals('官方源', '私有源', ''),
-      sourceUrls: containsAll('https://', 'topic:songloft-plugin')
+      discoveryCards: exactly(1),
+      discoveryCardTitle: exactly('GitHub 发现'),
+      discoveryCardOn: exactly(1),
+      discoveryTokenHint: containsAll('已配置', 'WXYZ'),
+      sourceRows: exactly(2),
+      sourceNames: equals('官方源', '私有源'),
+      sourceUrls: containsAll('https://')
     }
   ],
   [

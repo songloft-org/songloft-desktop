@@ -4323,14 +4323,56 @@ html[data-mini='true'] .toasts {
   gap: 6px;
 }
 
-/* 新增那一行：类型 + 名称 + 地址 + 添加。
-   ★ 类型那一格是 auto：「订阅源」与「GitHub 发现」两个词都不长，按内容宽度就够，
-     给多了会把真正要读的地址挤窄。
+/* 「GitHub 发现」那张**固定卡片**：与 .source-row 同一套栅格（开关 │ 内容 │ 右侧动作），
+   但底色深一档、左侧一道强调色 —— 它不在下面那串「可以删的行」里，视觉上必须先分开，
+   否则用户会去找它的删除按钮（那正是它没有的东西）。
+   ★ 强调条用 inset 阴影而不是 border-left：后者会把内容整体右推 2px，
+     与下面那些行的输入框左边界对不齐。 */
+.source-pinned {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  box-shadow: inset 3px 0 var(--accent);
+}
+
+/* 停用之后整块退到背景里：它还在（不可删除），但已经不参与搜索了。
+   文字不降透明度 —— 那会让 Token 状态这类信息变得难读。 */
+.source-pinned[data-enabled='false'] {
+  box-shadow: inset 3px 0 var(--line-2);
+}
+
+.source-pinned-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.source-pinned-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+/* Token 的格式问题：贴着输入框、用错误色 —— 它与顶部那条整表错误分开，
+   因为改完这一格就能继续保存，不必再去别处找原因 */
+.source-pinned-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--danger);
+}
+
+/* 新增那一行：名称 + 地址 + 添加。
    align-items: center 是为了让 29px 的按钮落在 38px 输入的垂直中线上，
    不然后者会把按钮顶到偏上 */
 .source-add {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.8fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) auto;
   gap: 10px;
   align-items: center;
 }

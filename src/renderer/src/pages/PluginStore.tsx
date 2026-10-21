@@ -5,9 +5,10 @@
  *   * 订阅源（后端聚合，`POST /jsplugins/registry/refresh`）—— 默认的那一份；
  *   * **GitHub 发现**（`GITHUB_DISCOVERY`）—— 按 topic 搜 GitHub 上的社区插件，
  *     由主进程逐个核对清单与 release 资产（见 hooks/useGithubDiscovery）。
- *     它在**订阅源管理**里与 URL 源并排（开关 / 改名 / 移除 / Token 都在那一处），
- *     只是没有注册表地址 —— 「在不在 / 开没开」落在本地设置（`AppSettings.githubDiscovery`），
- *     移除后下拉里就没有这一格，停用后它不参与「全部订阅源」的聚合搜索。
+ *     它在「管理订阅源」里是一张**固定卡片**（不可删除：没有注册表地址，也就没有「换一个」
+ *     或「加回来」这回事），能改的只有开关与 Token —— 开关落在本地设置
+ *     （`AppSettings.githubDiscovery`），停用后它不参与「全部订阅源」的聚合搜索。
+ *     下拉里它固定占一格（停用时标注「已停用」），单独选中仍然能看。
  *   搜索框与来源下拉是「搜什么 + 搜哪儿」的两半，所以切到发现之后**同一个搜索框**就变成了
  *   GitHub 搜索（关键词还会顺带搜 owner/repo）。
  *
@@ -144,21 +145,24 @@ export function PluginStore(): React.JSX.Element {
    */
   const githubInstalls = useSettings((state) => state.settings.githubInstalls)
   /**
-   * 「GitHub 发现」这一条来源在订阅源列表里的状态（`present` / `enabled` / 名字）。
+   * 「GitHub 发现」这一档的状态（见「管理订阅源」里那张固定卡片）。
    *
-   * ★ 它在**订阅源管理**里与 URL 源并排管理（见 RegistrySourcesDialog）：删掉之后下拉里
-   *   就没有这一格，停用之后它不再参与「全部订阅源」的聚合搜索 —— 与 URL 源的行为一一对应。
+   * ★ 它固定存在、不可删除，只有「开 / 关」：关掉 = 不参与「全部订阅源」的聚合搜索，
+   *   与 URL 源的 `enabled: false` 同义；单独选中它时仍然照查（那是用户明确指定的来源）。
    */
   const discoverySource = useSettings((state) => state.settings.githubDiscovery)
   /**
-   * 这一页现在有没有 GitHub 卡片要画：选中的是发现页，或者在订阅源那边**正在搜**。
-   * ★ 搜索是跨来源的：用户在「全部订阅源」里搜一个插件名，GitHub 那一半也该跟着搜 ——
-   *   否则「插件商店能搜到所有可安装的插件」只对他恰好选了哪一格成立。
+   * 这一页现在有没有 GitHub 卡片要画。
+   *
+   * ★ **搜索范围跟着下拉走**，这条是「选源」这件事的全部含义：
+   *   · 选中「全部订阅源」（`sourceUrl === ''`）—— 聚合，GitHub 那一半也进来（没被停用时）；
+   *   · 选中某条 URL 源 —— **只搜那一个源**。这时候再把 GitHub 的结果混进来，
+   *     用户会以为下拉没生效（他明明选了「官方源」，却看见 GitHub 的卡片）；
+   *   · 选中「GitHub 发现」—— 只有它（`discoveryMode`）。
    *   不带关键词时仍只有发现页才发请求（一次发现要逐仓库核对，不该为打开商店白花配额）。
-   * ★ 前提是那一档**没被停用**：停用 = 不参与聚合（与 URL 源的 `enabled: false` 同义），
-   *   但用户明确选中它时仍然照查 —— 那是他自己指定的来源。
    */
-  const githubCards = discoveryMode || (keyword !== '' && discoverySource.enabled)
+  const githubCards =
+    discoveryMode || (sourceUrl === '' && keyword !== '' && discoverySource.enabled)
   /**
    * ★ 没有 GitHub 卡片要画时 `active` 为 false：那个 hook 连一个请求都不发。
    *   关键词用父组件那份**已防抖**的 —— 搜索框是两半来源共用的同一颗。
@@ -202,17 +206,15 @@ export function PluginStore(): React.JSX.Element {
          * 选中的那个源可能刚被删掉或改了地址。留着它的话下一次请求会 400
          * （单源模式的 `registry_url` 指向一个不存在的源），所以退回「全部订阅源」。
          *
-         * ★ 「GitHub 发现」不在服务端那份名单里（它没有注册表地址），所以先单独放行；
-         *   但它在本地设置里**可以被删掉** —— 删掉之后还停在发现页的话，这一页就既没有
-         *   下拉里那一格、也没有数据来源，得当场退回「全部订阅源」。
-         *   停用（`enabled: false`）不退回：那是「不参与聚合」，单独选中仍然能看。
+         * ★ 「GitHub 发现」不在服务端那份名单里（它没有注册表地址），所以先单独放行。
+         *   它也不会消失（固定卡片、不可删除），停用后也不退回 —— 停用只是「不参与聚合」，
+         *   单独选中仍然能看。
          */
-        setSourceUrl((current) => {
-          if (current === GITHUB_DISCOVERY) {
-            return useSettings.getState().settings.githubDiscovery.present ? current : ''
-          }
-          return !current || list.some((source) => source.url === current) ? current : ''
-        })
+        setSourceUrl((current) =>
+          current === GITHUB_DISCOVERY || !current || list.some((source) => source.url === current)
+            ? current
+            : ''
+        )
       })
       .catch(() => undefined)
   }, [client])
@@ -576,9 +578,17 @@ export function PluginStore(): React.JSX.Element {
             插件商店
           </h1>
           <p className="page-subtitle">
+            {/*
+              副标题把**当前搜索范围**说出来：切了源之后列表会变短或变长，
+              不写清楚的话那看起来只是「结果变了」而不是「范围变了」。
+            */}
             {discoveryMode
               ? '按 GitHub 上的 songloft-plugin topic 自动发现社区插件；列出来的每一条都核对过清单与发布资产，安装仍在服务端完成。'
-              : '列表来自服务端的扩展订阅源，安装与更新都在服务端完成。'}
+              : selectedSource
+                ? `只显示「${selectedSource.name || selectedSource.url}」里的扩展，安装与更新都在服务端完成。`
+                : discoverySource.enabled
+                  ? '列表来自服务端的扩展订阅源，搜索时也一并搜 GitHub 社区；安装与更新都在服务端完成。'
+                  : '列表来自服务端的扩展订阅源（「GitHub 发现」已停用，不参与聚合）；安装与更新都在服务端完成。'}
             {discoveryMode
               ? discovery.plugins.length > 0
                 ? ` 已载入 ${discovery.plugins.length} 个。`
@@ -671,18 +681,16 @@ export function PluginStore(): React.JSX.Element {
           {/*
             ★ 这一格的值不是订阅源 URL —— 后端不认识它，`refreshRegistry` 也绝不能收到它；
               选中之后这一页换由 useGithubDiscovery 供数。
-            ★ 但它**在订阅源管理里与 URL 源并排**（开关 / 改名 / 移除 / Token 都在那一处），
-              所以这里跟着设置走：删掉就不出现、停用就标出来、名字跟着用户改。
-              与上面那些源同一套口径 —— 两处说法不一致的话，用户会以为自己改错了地方。
+            ★ 它**固定存在**（「管理订阅源」里那张卡片不可删除），所以这里不带「有没有」的判断，
+              只跟 `enabled` 走：停用就打上标注、且不再参与「全部订阅源」的聚合搜索。
+              「已停用」这一格仍然可选 —— 停用是「不参与聚合」，不是「不许看」（与上面那些源一致）。
           */}
-          {discoverySource.present ? (
-            <optgroup label="社区">
-              <option value={GITHUB_DISCOVERY}>
-                {discoverySource.name.trim() || GITHUB_DISCOVERY_NAME}
-                {discoverySource.enabled ? '' : '（已停用）'}
-              </option>
-            </optgroup>
-          ) : null}
+          <optgroup label="社区">
+            <option value={GITHUB_DISCOVERY}>
+              {GITHUB_DISCOVERY_NAME}
+              {discoverySource.enabled ? '' : '（已停用）'}
+            </option>
+          </optgroup>
         </select>
         {discoveryMode ? (
           <select

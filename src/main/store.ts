@@ -83,8 +83,8 @@ export class ConfigStore {
       if (!PLAY_MODES.includes(settings.playMode)) settings.playMode = DEFAULT_SETTINGS.playMode
       /*
        * 对象型的设置项要**逐项**归一：上面那次展开是浅的，老配置里若只存了半截
-       * （例如只有 `present`），缺的那两档就是 undefined —— 界面拿到之后分不清
-       * 「停用」与「根本没这个字段」，而这两者的表现正好相反（一个是留着不搜，一个是压根不出现）。
+       * （这一项此前还带过 `present` / `name` 两个字段），缺的那几档就是 undefined ——
+       * 而 `enabled: undefined` 在界面上既不是开也不是关。多出来的旧字段留着无害：没人再读它们。
        */
       settings.githubDiscovery = {
         ...DEFAULT_SETTINGS.githubDiscovery,
