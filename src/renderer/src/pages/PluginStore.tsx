@@ -582,8 +582,11 @@ export function PluginStore(): React.JSX.Element {
         </div>
       </div>
 
-      {/* 搜索框不铺满整行：这一栏宽起来能有上千像素，一条横贯全屏的输入框反而不好对焦。
-          筛选下拉紧挨着它，「搜什么 + 搜哪儿」是同一件事的两半 */}
+      {/* 搜索 + 筛选是这一页的工具栏，**铺满整行**：右边界与下面的卡片网格对齐。
+          原先把它收在 420 宽，落成「左端挤着两个框、右边空掉一大块」，跟卡片网格两端
+          都对不上，看着像没排完。搜索框用 flex 吃掉剩下的宽度（`minWidth: 0` 是让它在
+          窄窗口里能被压下去，否则 input 的固有宽度会把这一行顶出容器），
+          筛选下拉固定 240 紧挨着它 ——「搜什么 + 搜哪儿」是同一件事的两半。 */}
       <div className="row">
         <input
           className="input"
@@ -592,7 +595,7 @@ export function PluginStore(): React.JSX.Element {
           // 发现页那一份搜的是 GitHub：关键词还会顺带搜 owner/repo，所以提示得跟着换
           placeholder={discoveryMode ? '搜索扩展或 owner/repo…' : '搜索扩展…'}
           aria-label="搜索扩展"
-          style={{ maxWidth: 420 }}
+          style={{ flex: '1 1 auto', minWidth: 0 }}
           onChange={(event) => setInput(event.target.value)}
         />
         <select
