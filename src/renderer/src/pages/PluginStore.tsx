@@ -628,14 +628,14 @@ export function PluginStore(): React.JSX.Element {
             {/*
               副标题把**当前搜索范围**说出来：切了源之后列表会变短或变长，
               不写清楚的话那看起来只是「结果变了」而不是「范围变了」。
+
+              ★ 各分支的文案要**差不多长**（一句，收尾都是「安装…在服务端完成」）：
+              副标题没有固定行高，哪个分支多出一行，页头就跟着变高，
+              每切一次源，下面的搜索框与卡片网格都要跳一次。所以 GitHub 这一档
+              只说「范围 + 未经审核」，核对规则与免责细节交给卡片、安装确认与统计行。
             */}
             {discoveryMode
-              ? [
-                  '只显示 GitHub 社区里发现的扩展（按 songloft-plugin topic 搜出来，',
-                  '每一条都核对过清单与发布资产），安装仍在服务端完成。',
-                  // 免责跟着这一句走：社区插件没过审核，格式校验也不等于安全审核
-                  '这些扩展未经 Songloft 审核，格式校验不代表安全审核。'
-                ].join('')
+              ? '只显示 GitHub 社区发现的扩展（未经审核）；安装与更新都在服务端完成。'
               : selectedSource
                 ? `只显示「${selectedSource.name || selectedSource.url}」里的扩展，安装与更新都在服务端完成。`
                 : discoverySource.enabled
@@ -715,7 +715,7 @@ export function PluginStore(): React.JSX.Element {
             ★ 「GitHub 发现」不再有自己的排序下拉，也不再单独占一行免责提示：
               它和别的源一样是「全部订阅源」的一份子，选中它只是**收窄范围**，
               不该顺手把这一页的排版也换一套（换一套 = 每切一次源，视线上面的东西都挪一次）。
-              免责那句并进了副标题（见上面那个 ternary）。
+              「未经审核」只留在副标题的一个短语里，细节在卡片与安装确认里（见 installFromGithub）。
           */}
           {discovery.error && discovery.plugins.length > 0 ? (
             <div className="probe-result" data-state="error" style={{ marginTop: 10 }}>
