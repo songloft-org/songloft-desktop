@@ -339,6 +339,34 @@ export function matchesDiscoveryKeyword(plugin: GithubDiscoveryPlugin, keyword: 
   )
 }
 
+/**
+ * 关键词是否出现在**这张卡片自己写着的字**上：插件名 / 入口 / 作者 / 清单里的描述 / `owner/repo`。
+ *
+ * 比 `matchesDiscoveryKeyword` 多一条 `description`，用途也不同：这一份只用来**复核 GitHub
+ * 已经搜出来的那批**。GitHub 那边把 README 也算进匹配范围，而 README 是一整段话 —— 提到别的
+ * 插件名、生态里绕不开的词都会命中。搜「知音」的时候，几篇 README 写着「可灌入知音插件」的
+ * 仓库就被一并带了出来，而卡片上根本没有「知音」两个字，用户看到的就是「搜 A 却出来 B」。
+ * 卡上没写的词，不该成为它出现在结果里的理由。
+ *
+ * 反过来不能拿它去筛**整个目录**：描述是一整段话，做子串匹配太松，几乎什么都能命中
+ * （上面那条注释讲的就是这件事）。
+ */
+export function matchesDiscoveryCardKeyword(
+  plugin: GithubDiscoveryPlugin,
+  keyword: string
+): boolean {
+  const term = keyword.trim().toLowerCase()
+  if (!term) return true
+  const { manifest, repository } = plugin
+  return [
+    manifest.name,
+    manifest.entryPath,
+    manifest.author,
+    manifest.description,
+    repository.fullName
+  ].some((field) => field.toLowerCase().includes(term))
+}
+
 /** 一个 issue/PR/仓库列表项 → 仓库。（不符合发现规则的返回 null，直接丢掉） */
 export function toGithubRepository(value: unknown): GithubRepository | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null

@@ -10,6 +10,7 @@ import {
   githubUrlRepository,
   hostCompatibility,
   isRepositoryMetadataUrl,
+  matchesDiscoveryCardKeyword,
   matchesDiscoveryKeyword,
   parseGithubPluginManifest,
   parseReleaseDownload,
@@ -183,6 +184,33 @@ describe('搜索', () => {
       manifest: manifest({ description: '一个能听天气的电台插件' })
     })
     expect(matchesDiscoveryKeyword(withDescription, '天气')).toBe(false)
+  })
+})
+
+/*
+ * 复核 GitHub 命中用的那份判据：它多认一条清单描述（GitHub 把 README 也算进匹配，
+ * 而卡上写着的是描述），但也不能宽到"什么都能命中"。
+ */
+describe('matchesDiscoveryCardKeyword', () => {
+  it('身份字段照旧命中', () => {
+    expect(matchesDiscoveryCardKeyword(discovery(), '电台')).toBe(true)
+    expect(matchesDiscoveryCardKeyword(discovery(), 'radio-time')).toBe(true)
+  })
+
+  it('清单描述里出现也算 —— GitHub 按描述命中过，本地不该把它复核掉', () => {
+    const withDescription = discovery({
+      manifest: manifest({ description: '一个能听天气的电台插件' })
+    })
+    expect(matchesDiscoveryCardKeyword(withDescription, '天气')).toBe(true)
+  })
+
+  it('卡上完全没有的词不命中（README 里提过不算）', () => {
+    // 搜「知音」时被 GitHub 带出来的那些仓库，正是这一档
+    expect(matchesDiscoveryCardKeyword(discovery(), '知音')).toBe(false)
+  })
+
+  it('空关键词不过滤', () => {
+    expect(matchesDiscoveryCardKeyword(discovery(), '   ')).toBe(true)
   })
 })
 

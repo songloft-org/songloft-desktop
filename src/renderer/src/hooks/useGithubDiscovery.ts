@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   discoveryRowKey,
+  matchesDiscoveryCardKeyword,
   matchesDiscoveryKeyword,
   type DiscoveryFailure,
   type GithubDiscoveryPlugin,
@@ -405,6 +406,10 @@ export function useGithubDiscovery(input: {
    *
    * ★ 两半缺一不可：GitHub 那一半按仓库字段搜，能把还没核对过的仓库带进来；本地那一半才认
    *   卡片上写着的插件名。只留任一半都会出现「明明在列表里，搜名字却搜不到」。
+   * ★ GitHub 命中那一半还要**再复核一遍**：它也把 README 算进匹配范围，于是「README 里提过
+   *   一句」的仓库会混进来（搜「知音」，几个写着「可灌入知音插件」的仓库全被带了出来），
+   *   而卡片上根本没有那两个字。卡上没写的词不该成为它出现在结果里的理由 ——
+   *   见 `matchesDiscoveryCardKeyword`（那份判据比全目录匹配多认一条清单描述）。
    */
   const plugins = useMemo(() => {
     if (keyword.trim() === '') return browse
@@ -413,6 +418,7 @@ export function useGithubDiscovery(input: {
     const ranked = [...hitKeys]
       .map((key) => byKey.get(key))
       .filter((plugin): plugin is GithubDiscoveryPlugin => plugin != null)
+      .filter((plugin) => matchesDiscoveryCardKeyword(plugin, keyword))
     return [
       ...ranked,
       ...known.filter(
