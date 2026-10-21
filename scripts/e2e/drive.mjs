@@ -605,9 +605,10 @@ window.__t = {
      * ★ 断言的是整串顺序而不只是「含这几个」：这一格曾经被单独塞进「社区」那个 optgroup，
      *   而那正是「它和别的源不是一类东西」这种错觉的来处。
      */
-    storeSources: vis('select[aria-label="筛选订阅源"] option').map((e) =>
-      (e.textContent || '').trim()
-    ),
+    storeSources: vis('select[aria-label="筛选订阅源"] option')
+      /* 跳过那条分隔项（禁用的 option）：它不是可选项，名字是一串制表符 */
+      .filter((e) => !e.disabled)
+      .map((e) => (e.textContent || '').trim()),
     /** 订阅源对话框里那张固定卡片（「GitHub 发现」：不可删除，只有开关与 Token） */
     discoveryCards: vis('.source-pinned').length,
     discoveryCardTitle: vis('.source-pinned .source-pinned-title')[0]?.textContent ?? '',

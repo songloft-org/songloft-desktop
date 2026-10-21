@@ -2598,6 +2598,19 @@ select.input option {
   color: var(--text-1);
 }
 
+/* 下拉里的分隔项（「全部订阅源」与下面那些源之间那条线）：一条点不动的横线。
+   ★ **颜色必须与正文分开**：上面那条 `option` 规则把颜色统一成了 --text-1，分隔项照抄
+     下来就是一行正文色 —— 它会被读成「一个叫 ──────── 的源」，而不是一条分隔线。
+     用 --line-2（主题里的线色），暗色主题下同样淡。
+   ★ 字号压小 + 字距收紧：26 个制表符在 13px 下会撑出 240px 的下拉宽度，被截成两段
+     就不像一条线了；压到 10px 后正好铺满一行，且字符首尾相接。 */
+select.input option[data-separator] {
+  color: var(--line-2);
+  font-size: 10px;
+  line-height: 10px;
+  letter-spacing: -0.5px;
+}
+
 .switch {
   position: relative;
   width: 40px;

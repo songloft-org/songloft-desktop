@@ -84,17 +84,22 @@ const PAGE_SIZE = 20
 const GITHUB_DISCOVERY = '__discovery__'
 
 /**
- * 来源下拉里，各条源相对「全部订阅源」的那一级缩进。
+ * 来源下拉里「全部订阅源」与它下面那些源之间的分隔项。
  *
- * ★ 原生 `<select>` 没有嵌套选项：`<option>` 不能包 `<option>`，而 `<optgroup>` 的标签
- *   **不可选** —— 「全部订阅源」恰恰是那个必须可选的总项，所以分组这条路上限就到这儿了。
- *   能把「这些是它的子项」表达出来的，只剩文本缩进。
- * ★ 用 EM SPACE 而不是普通空格：后者在 `<option>` 里会被折叠掉（看着没有缩进）。
- *   它在 `String.prototype.trim()` 的范围内，所以 e2e 量与断言拿到的仍是干净的名字。
- * ★ 缩进要给**每一层子项**都加（GitHub 发现 + 各条 URL 源）：只缩其中一类的话，
- *   等于又在下拉里画了条隐形的分组线，正好回到这次要拆掉的那个错觉。
+ * ★ 用它而不是缩进：`<option>` 里的前导空白既可能被折叠、宽度也随字体飘（EM SPACE 在中文字体
+ *   里正好一格、在别处未必），看起来更像是「不小心多打了个空格」，而不是「这是一个总项」。
+ * ★ 用它而不是 `<optgroup>`：组标签**不可选**，而「全部订阅源」恰恰是那个必须能选中的总项。
+ * ★ 用**禁用的 option** 而不是 `<hr>`：`<hr>` 在 select 弹层里画的是浏览器自己的那条线，
+ *   颜色跟着正文走 —— 与其它选项一个色，它会被读成「一个叫 ──────── 的源」。
+ *   禁用项的样式由我们控制（见 CSS 里的 [data-separator]），且照样点不动、不占键盘导航。
+ * ★ 值给一个不可能被选中的哨兵：不给 value 的禁用项在某些浏览器里仍能被脚本选中。
  */
-const SOURCE_INDENT = '\u2003'
+const SOURCE_SEPARATOR_VALUE = '__separator__'
+const SOURCE_SEPARATOR = (
+  <option value={SOURCE_SEPARATOR_VALUE} disabled data-separator="">
+    {'─'.repeat(26)}
+  </option>
+)
 
 /** 一次安装要交给服务端的那几样东西（两个来源共用同一条路，只有取法不同） */
 interface InstallTarget {
@@ -682,11 +687,12 @@ export function PluginStore(): React.JSX.Element {
           }}
         >
           {/*
-            ★ 层次只有一层：**全部订阅源**是「上面这些的全集」，其余每一项都是它的子项
-              （GitHub 发现与各条 URL 源是同一层级 —— 别把其中一类单独划出去，那正是
-              「它俩不是一类东西」那个错觉的来源，见 SOURCE_INDENT 的说明）。
+            ★ 层次只有一层：**全部订阅源**是「下面这些的全集」，一条分隔线把它与子项隔开
+              （GitHub 发现与各条 URL 源同一层级 —— 别把其中一类单独划出去，那正是
+              「它俩不是一类东西」那个错觉的来源，见 SOURCE_SEPARATOR 的说明）。
           */}
           <option value="">全部订阅源</option>
+          {SOURCE_SEPARATOR}
           {/*
             ★ 这一格的值不是订阅源 URL —— 后端不认识它，`refreshRegistry` 也绝不能收到它；
               选中之后这一页换由 useGithubDiscovery 供数。
@@ -695,12 +701,14 @@ export function PluginStore(): React.JSX.Element {
               「已停用」这一格仍然可选 —— 停用是「不参与聚合」，不是「不许看」（与下面那些源一致）。
           */}
           <option value={GITHUB_DISCOVERY}>
-            {`${SOURCE_INDENT}${GITHUB_DISCOVERY_NAME}${discoverySource.enabled ? '' : '（已停用）'}`}
+            {GITHUB_DISCOVERY_NAME}
+            {discoverySource.enabled ? '' : '（已停用）'}
           </option>
           {sources.map((source) => (
             <option key={source.url} value={source.url}>
+              {source.name || source.url}
               {/* 停用的源不在聚合结果里，但单独看它是允许的 —— 标出来才不会被当成「源没了」 */}
-              {`${SOURCE_INDENT}${source.name || source.url}${source.enabled ? '' : '（已停用）'}`}
+              {source.enabled ? '' : '（已停用）'}
             </option>
           ))}
         </select>
