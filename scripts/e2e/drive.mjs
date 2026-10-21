@@ -382,6 +382,20 @@ window.__t = {
     paletteItems: vis('.palette-item').length,
     // 播放队列条目数
     queueItems: vis('.queue-item').length,
+    /**
+     * 队列抽屉里当前那一项是否**整行**落在滚动区的可视范围内（拿 rect 量）。
+     *
+     * ★ 只数 queueItems 抓不到这一类 bug：那一项照样渲染着、高亮着，只是位置被算错了。
+     *   实测踩过 —— 目标算到可滚底部之外，被引擎夹到最底，当前项落在视口上方 4014px。
+     */
+    queueCurrentInView: (() => {
+      const body = document.querySelector('.panel-body');
+      const item = document.querySelector('.queue-item[data-current="true"]');
+      if (!body || !item) return null;
+      const b = body.getBoundingClientRect();
+      const r = item.getBoundingClientRect();
+      return r.top >= b.top - 1 && r.bottom <= b.bottom + 1;
+    })(),
     // 面板关闭时整个不渲染，所以数个数就是「开没开」
     panel: vis('.panel').length,
     // 折叠菜单里「双面」项（悬浮出二级菜单）的个数。菜单只断言文字的话，
@@ -1520,16 +1534,36 @@ const STEPS = [
       playerTitle: hasSong
     }
   ],
-  // 滚回顶部：当前行此刻离中间很远，于是下一步「切走再切回来」的断言不可能白拿
-  ['81-locate-scrolled-away', 'window.__t.scrollPageTop()', 900, { currentRowOffset: atLeast(50) }],
+  /*
+   * 队列抽屉是另一套落点规则（只保证「看得见」，不居中），而且它**没有**被上面那套
+   * 「行中心 = 容器中心」覆盖 —— 实测在这里踩过：位置算法把「相对滚动原点的距离」和
+   * 「从当前位置还要滚多少」加在一起，`scrollTop` 被多算一遍，目标越过可滚底部后引擎夹到最底，
+   * 当前项落在视口上方四千像素处：高亮还在，人看不见。队列此刻 43 项、当前项在第 27 项，
+   * 它一定在折线以下，所以这一步真的会走「往下滚」那条分支。
+   */
   [
-    '82-locate-leave',
+    '81-queue-locate',
+    'window.__t.click(\'.playerbar button[aria-label="播放队列"]\')',
+    2000,
+    { panel: exactly(1), queueItems: exactly(43), queueCurrentInView: exactly(true) }
+  ],
+  // 收起抽屉，免得后面三步的截图里多挂一块面板
+  [
+    '82-queue-close',
+    'window.__t.click(\'.playerbar button[aria-label="播放队列"]\')',
+    1400,
+    { panel: exactly(0) }
+  ],
+  // 滚回顶部：当前行此刻离中间很远，于是下一步「切走再切回来」的断言不可能白拿
+  ['83-locate-scrolled-away', 'window.__t.scrollPageTop()', 900, { currentRowOffset: atLeast(50) }],
+  [
+    '84-locate-leave',
     "window.__t.click('.nav-item', '最近播放')",
     2000,
     { pageTitle: exactly('最近播放') }
   ],
   [
-    '83-locate-back',
+    '85-locate-back',
     "window.__t.click('.nav-item', '曲库')",
     2400,
     { pageTitle: exactly('曲库'), currentRowIndex: exactly(26), currentRowOffset: atMost(4) }
