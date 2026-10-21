@@ -178,6 +178,30 @@ window.__t = {
     el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
     return 'OK';
   },
+  /**
+   * 双击第 n 个匹配（dbl 只能点第一个）。
+   *
+   * 为什么需要它：验证「当前曲自动滚到列表中间」时必须点**列表靠后**的一行 ——
+   * 点第一行的话「居中」与「贴顶」是同一个位置（都被夹到 0），断言恒真。
+   */
+  dblNth: (sel, index) => {
+    const el = vis(sel)[index];
+    if (!el) return 'NOT_FOUND:' + sel + '#' + index;
+    el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
+    return 'OK';
+  },
+  /**
+   * 把「看得见的那一页」滚回顶部（即时，不带动画）。
+   *
+   * 用来制造一个「当前曲不在中间」的前提 —— 不然「切走再切回来会重新定位」那一步
+   * 无论有没有重新定位都绿：滚回去时它本来就还在中间。
+   */
+  scrollPageTop: () => {
+    const slot = vis('.page-slot')[0];
+    if (!slot) return 'NOT_FOUND:.page-slot';
+    slot.scrollTo({ top: 0, behavior: 'instant' });
+    return 'OK';
+  },
   key: (key, mods) => {
     window.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ key, bubbles: true }, mods || {})));
     return 'OK';
@@ -323,6 +347,26 @@ window.__t = {
    */
   counts: () => ({
     rows: vis('.song-row').length,
+    /**
+     * 当前正播的那一行在这份列表里的下标；-1 = 这一页没有当前曲（没在播 / 歌不在列表里）。
+     * 用来钉住「点的是第几行」——只断言偏移的话，定位到邻行也能绿。
+     */
+    currentRowIndex: vis('.song-row').findIndex((e) => e.dataset.current === 'true'),
+    /**
+     * 当前曲那一行的**中心**离「看得见的那一页」中心多少 px（取绝对值）。
+     * -1 = 没有当前行。
+     *
+     * ★ 为什么量中心而不是「在不在视野里」：这一条要挡的是「滚到了中间」这件事本身。
+     *   「看得见」是个太松的口径 —— 只保证看得见的实现（贴顶/贴底）也照样满足它。
+     */
+    currentRowOffset: (() => {
+      const row = vis('.song-row').find((e) => e.dataset.current === 'true');
+      const slot = row?.closest('.page-slot');
+      if (!row || !slot) return -1;
+      const r = row.getBoundingClientRect();
+      const s = slot.getBoundingClientRect();
+      return Math.round(Math.abs((r.top + r.bottom) / 2 - (s.top + s.bottom) / 2));
+    })(),
     cards: vis('.card').length,
     navs: vis('.nav-item').length,
     chips: vis('.chip').length,
@@ -1444,6 +1488,51 @@ const STEPS = [
     "window.__t.click('.segmented[aria-label=\"曲库来源\"] button', '服务器')",
     2200,
     { rows: exactly(2), folderRows: exactly(0), viewSwitches: exactly(2) }
+  ],
+
+  /*
+   * ── 当前曲自动定位到列表中间 ─────────────────────────────────────────
+   * 这是纯视觉行为，截图里看不出对错（偏了半屏的截图看着也很正常），只能量：
+   * 当前那一行的**中心**与滚动容器中心的距离。所以多了两个口径（见 counts 里的
+   * currentRowIndex / currentRowOffset）。
+   *
+   * ★ 必须点**靠后**的一行：点第 0 行的话「居中」被夹到 0，与「贴在顶上」是同一个位置，
+   *   断言恒真。这里取第 27 行（共 43 行）—— 它下方还留着十几行，所以也不会被底部夹取
+   *   顶掉（那同样是「贴着底」而不是「居中」）。
+   * ★ 后三步是**成对**的：先把当前曲滚出中间，再切走、切回来。切回来时这一页不会重新
+   *   挂载（页面槽常驻，见 App 的 NativePages），所以要靠「我活跃了」重新算一次才回得到
+   *   中间 —— 少了这个口径，「定位只在挂载时跑一次」也照样绿。
+   */
+  [
+    '79-library-all-again',
+    "window.__t.click('.segmented[aria-label=\"歌曲类型\"] button', '全部')",
+    2200,
+    { rows: exactly(43) }
+  ],
+  [
+    '80-locate-deep-row',
+    'window.__t.dblNth(".song-row", 26)',
+    2200,
+    {
+      // 点的是第 27 行、当前行也是第 27 行：定位到邻行的话这一条立刻红
+      currentRowIndex: exactly(26),
+      currentRowOffset: atMost(4),
+      playerTitle: hasSong
+    }
+  ],
+  // 滚回顶部：当前行此刻离中间很远，于是下一步「切走再切回来」的断言不可能白拿
+  ['81-locate-scrolled-away', 'window.__t.scrollPageTop()', 900, { currentRowOffset: atLeast(50) }],
+  [
+    '82-locate-leave',
+    "window.__t.click('.nav-item', '最近播放')",
+    2000,
+    { pageTitle: exactly('最近播放') }
+  ],
+  [
+    '83-locate-back',
+    "window.__t.click('.nav-item', '曲库')",
+    2400,
+    { pageTitle: exactly('曲库'), currentRowIndex: exactly(26), currentRowOffset: atMost(4) }
   ]
 ]
 
