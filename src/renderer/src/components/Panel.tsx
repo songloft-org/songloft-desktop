@@ -14,6 +14,7 @@ import { openMenuFromEvent } from './ContextMenu'
 import { buildSongMenuItems } from './songMenu'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
 import { displayArtist, formatDuration } from '@/lib/format'
+import { findScrollParent } from '@/lib/scroll'
 import { usePlayer } from '@/state/usePlayer'
 import { useUi } from '@/state/useUi'
 
@@ -116,19 +117,6 @@ function NowPlaying(): React.JSX.Element {
 }
 
 /**
- * 从队列列表往上找**第一个真的能滚的祖先**：抽屉里是 .panel-body，迷你模式里是 .mini-queue。
- *
- * 存在的理由见下面那段 effect：我们要自己滚，就不能再让浏览器替我们猜容器。
- */
-function findScrollParent(el: HTMLElement | null): HTMLElement | null {
-  for (let node = el?.parentElement ?? null; node; node = node.parentElement) {
-    const { overflowY } = getComputedStyle(node)
-    if (overflowY === 'auto' || overflowY === 'scroll') return node
-  }
-  return null
-}
-
-/**
  * 播放队列。
  *
  * ★ 导出是为了给**迷你窗那块面板**复用（见 MiniPlayer.tsx）：同一个队列在两处出现，
@@ -170,10 +158,10 @@ export function Queue({
     if (!item || !container) return
 
     /*
-     * ★ 自己算偏移，**不用 item.scrollIntoView()**：那个 API 会把「它所有的祖先滚动容器」
-     *   依次滚一遍，视口也在内。迷你窗只有 400×480，而列表项在文档坐标里可能远在窗口下方
-     *   （被 .mini-queue 剪掉的那些仍然占着文档坐标），于是那一下会连着视口一起滚 ——
-     *   整条迷你播放器被顶出窗外，右上角那三颗窗口钮跟着不见。
+     * ★ 自己算偏移，**不用 item.scrollIntoView()**（「能滚的祖先」怎么找见 lib/scroll.ts）：
+     *   那个 API 会把「它所有的祖先滚动容器」依次滚一遍，视口也在内。迷你窗只有 400×480，
+     *   而列表项在文档坐标里可能远在窗口下方（被 .mini-queue 剪掉的那些仍然占着文档坐标），
+     *   于是那一下会连着视口一起滚 —— 整条迷你播放器被顶出窗外，右上角那三颗窗口钮跟着不见。
      *
      * ★ 两种落法，用途不同：
      *   · currentSlot = 0（抽屉）：只保证看得见 —— 在上方露不出来就贴顶、下方露不出来就贴底，
