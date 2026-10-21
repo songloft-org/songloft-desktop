@@ -487,7 +487,13 @@ function handlePlugins(req, res, path) {
   const owned =
     path.startsWith('/api/v1/jsplugins') ||
     path.startsWith('/api/v1/jsplugin/') ||
-    path.startsWith('/api/v1/settings/plugin-')
+    path.startsWith('/api/v1/settings/plugin-') ||
+    /*
+     * 「GitHub 发现」的凭据也在这一组里：它属于插件商店的那几条设置，只是路径前缀是
+     * `settings/github-` 而不是 `settings/plugin-`。漏认领会落到外面那个「写操作一律回 200、
+     * 读操作 404」的兜底上 —— 界面于是显示「读取失败」，而看上去像是客户端接错了。
+     */
+    path === '/api/v1/settings/github-discovery-token'
   if (!owned) return false
 
   const action = /^\/api\/v1\/jsplugins\/(\d+)\/(enable|disable)$/.exec(path)

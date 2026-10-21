@@ -385,7 +385,15 @@ export function RegistrySourcesDialog({
               <input
                 className="input"
                 value={row.name}
-                placeholder={`名称（可留空，默认「${row.kind === 'github' ? GITHUB_DISCOVERY_NAME : '读地址'}」）`}
+                /*
+                 * 留空的含义两种源不一样，所以提示语也得跟着变：URL 源会退回显示地址本身
+                 * （「这到底是哪个源」全靠那串地址认），而 GitHub 那一档没有地址可退回。
+                 */
+                placeholder={
+                  row.kind === 'github'
+                    ? `名称（可留空，默认「${GITHUB_DISCOVERY_NAME}」）`
+                    : '名称（可留空）'
+                }
                 spellCheck={false}
                 aria-label="订阅源名称"
                 onChange={(event) =>
