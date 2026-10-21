@@ -14,7 +14,7 @@ import { openMenuFromEvent } from './ContextMenu'
 import { buildSongMenuItems } from './songMenu'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
 import { displayArtist, formatDuration } from '@/lib/format'
-import { scrollRowIntoView, scrollRowToSlot } from '@/lib/scroll'
+import { findScrollParent, scrollRowToCenterIfHidden, scrollRowToSlot } from '@/lib/scroll'
 import { usePlayer } from '@/state/usePlayer'
 import { useUi } from '@/state/useUi'
 
@@ -117,13 +117,22 @@ function NowPlaying(): React.JSX.Element {
 }
 
 /**
+ * 抽屉上次的滚动位置（见 Queue 里「先归位」那个 effect）。
+ *
+ * 抽屉关掉时整块卸载，滚动位置不会自己留着；记在模块级就够 —— 它只属于主窗口那一个抽屉，
+ * 迷你窗是另一个渲染进程，模块各有一份。
+ */
+let savedQueueScroll = 0
+
+/**
  * 播放队列。
  *
  * ★ 导出是为了给**迷你窗那块面板**复用（见 MiniPlayer.tsx）：同一个队列在两处出现，
  *   两套实现迟早分叉（拖拽排序、跟随当前曲滚动…都得各写一遍）。
  *   它自己不带滚动容器 —— 谁挂它谁负责给（抽屉那边是 .panel-body，迷你那边是 .mini-queue）。
- * ★ currentSlot：定位当前曲时，要它落在容器**从上往下第 currentSlot+1 格**（0 = 只保证看得见）。
- *   迷你面板给 2（第 3 格），抽屉给默认的 0 —— 理由见下面那段 effect 的说明。
+ * ★ currentSlot：定位当前曲时，要它落在容器**从上往下第 currentSlot+1 格**。
+ *   迷你面板给 2（第 3 格 —— 那块只有 416px 高）；抽屉给默认的 0，意思是「看不见才居中」，
+ *   理由见下面那段 effect 的说明。
  * ★ menu：右键菜单开不开。**迷你窗里要关掉**——那份菜单的动作（加入歌单 / 从曲库删除 /
  *   查看歌手…）全都要主窗口的曲库与会话，而迷你窗是另一棵界面树、同一份组件：
  *   菜单画得出来（它读的也是 usePlayer 的镜像），点下去却落在没有那些 store 的一侧，
@@ -150,20 +159,47 @@ export function Queue({
   const currentIndex = cursor >= 0 && cursor < order.length ? order[cursor] : -1
 
   /*
+   * 先归位：抽屉关掉时整块卸载（.panel-body 随之消失），滚动位置不会自己留着 ——
+   * 记下来，重开时还原，再交给下面那个 effect 判断「当前曲还需要被找回来吗」。
+   * 少了这一段，每次打开都是从 0 开始，于是当前曲永远「看不见」→ 每次都要重滚一遍，
+   * 正是「别每次打开都跳一下」要避免的动作。
+   * ★ 必须在**定位那个 effect 之前**声明（effect 按声明顺序跑）。
+   * ★ 迷你面板（currentSlot > 0）不记：它按固定格位摆，记了也会被覆盖。
+   */
+  useEffect(() => {
+    if (currentSlot > 0) return
+    const container = findScrollParent(listRef.current)
+    if (!container) return
+    container.scrollTo({ top: savedQueueScroll, behavior: 'instant' })
+    /* 位置**跟着滚动实时记**，不要在卸载时读：被动 effect 的清理跑的时候 DOM 已经摘掉，
+       那一刻 scrollTop 是 0 —— 记下来的就是「0」，重开必然重新居中（实测踩过）。 */
+    const remember = () => {
+      savedQueueScroll = container.scrollTop
+    }
+    container.addEventListener('scroll', remember, { passive: true })
+    return () => container.removeEventListener('scroll', remember)
+  }, [currentSlot])
+
+  /*
    * 挂载（面板打开）与换曲时，把当前项摆到它该在的位置上。
    *
-   * ★ 两种落法，用途不同 —— 具体怎么算全在 lib/scroll.ts（那里有单测钉着坐标口径）：
-   *   · currentSlot = 0（抽屉）：只保证看得见，已经在视野里就一动不动（等价 block: 'nearest'）；
-   *   · currentSlot > 0（迷你面板）：**固定**落在从上往下第 currentSlot+1 格 —— 面板只有
-   *     416px 高，只保证「看得见」的话当前曲会贴着下边缘、甚至掉到视野之外。
+   * ★ 开抽屉先还原上次的滚动位置（下面那个 effect），**当前曲还在那一屏里就一动不动**，
+   *   看不见才滚到中间 —— 每开一次都把位置重置再居中，等于每次都让人重新找自己刚才看到
+   *   的地方。具体怎么算全在 lib/scroll.ts（那里有单测钉着坐标口径）。
+   * ★ currentSlot > 0（迷你面板）仍然是**固定**落在从上往下第 currentSlot+1 格：面板只有
+   *   416px 高，只保证「看得见」的话当前曲会贴着下边缘、甚至掉到视野之外。
    * ★ 不用 scrollIntoView：它会把祖先容器连视口一起滚（迷你窗会被整条顶出窗外）。
+   * ★ 抽屉这一下的落点可能差几十像素（视觉上仍是中间）：抽屉的列宽是过渡出来的
+   *   （.shell-body 的 grid-template-columns），动画期间队列头会重新折行、横向滚动条也可能
+   *   一闪，于是量到的版面与实际到位后的版面差一点。真要贴死中间就得等过渡结束再量一次，
+   *   而那一趟「先摆一次再修一次」的抖动比几十像素更显眼 —— 取舍如此，e2e 的容差不是 0。
    */
   useEffect(() => {
     if (currentIndex < 0) return
     const item = listRef.current?.querySelector<HTMLElement>(`[data-queue-index="${currentIndex}"]`)
     if (!item) return
     if (currentSlot > 0) scrollRowToSlot(item, currentSlot)
-    else scrollRowIntoView(item)
+    else scrollRowToCenterIfHidden(item)
   }, [currentIndex, currentSlot])
 
   if (queue.length === 0) {

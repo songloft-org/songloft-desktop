@@ -21,7 +21,7 @@ import { buildSongMenuItems, type SongMenuOptions } from './songMenu'
 import { usePageActive } from '@/hooks/usePageActive'
 import { SONGS_DRAG_TYPE } from '@/lib/dnd'
 import { displayAlbum, displayArtist, formatDuration, formatRelative } from '@/lib/format'
-import { scrollToCenter } from '@/lib/scroll'
+import { scrollRowToCenterIfHidden } from '@/lib/scroll'
 import { usePlayer } from '@/state/usePlayer'
 import { usePlaylists } from '@/state/usePlaylists'
 
@@ -186,17 +186,19 @@ export function SongTable({
   )
 
   /*
-   * 把当前曲摆到列表**中间**（而不是「能看见就行」）。
+   * 当前曲**看不见**的时候，把它摆到列表中间。
    *
-   * ★ 为什么不是只在挂载时跑一次：页面是常驻的（见 App 的 PageSlot），离开再回来不会
-   *   重新挂载 —— 用户「每次点开这份列表」看到的都还是上次的滚动位置。所以定位由
-   *   `pageActive`（这一页现在看不看得见）驱动：切回来就从当前曲重新算一次。
-   * ★ 换曲也跟着走（currentIndex 在依赖里），与播放队列面板同一个取舍：当前曲的标记
-   *   一旦被滚出视野，这一行「现在放到哪儿了」就再也看不出来了。
+   * ★ 「看不见才动」是这条规则的要点：切走再切回来时，这一页的滚动位置本来就还在
+   *   （页面槽常驻，见 App 的 PageSlot）；当前曲还在那一屏里，就一个字都别改 ——
+   *   用户回来看的正是他离开时那一屏。反过来，每切回来一次都重新居中，等于把他翻到
+   *   的那一段扔掉。
+   * ★ 要动的时候是**居中**，不是「推回边缘」：贴着上/下边缘的那一下同样像跳，而且
+   *   刚被推到边缘的那一行，上下文只剩一半。
+   * ★ 为什么不是只在挂载时跑一次：页面不会重新挂载（页面槽常驻），所以靠 `pageActive`
+   *   （这一页现在看不看得见）与 `currentIndex`（换曲）驱动。
    * ★ 依赖里**没有** songs 本身：列表内容变了但当前曲的相对位置没变时（在歌单内筛选、
    *   搜索框改一个字母）不该再滚一次 —— 那会把用户刚看上的一屏又拽走。
-   * ★ 首尾的夹取在 scrollToCenter 里（见 lib/scroll.ts）：滚到 0 或滚到底就停，
-   *   不会为了「居中」把列表拉出一片空白。
+   * ★ 首尾的夹取在 lib/scroll.ts 里：滚到 0 或滚到底就停，不会为了「居中」拉出空白。
    */
   const pageActive = usePageActive()
   const tableRef = useRef<HTMLDivElement>(null)
@@ -204,7 +206,7 @@ export function SongTable({
     if (!pageActive || currentIndex < 0) return
     // 排在 maxRendered 之后的行根本不渲染（列表底部那条提示就是这么说的），找不到就什么都不做
     const row = tableRef.current?.querySelector<HTMLElement>(`[data-song-index="${currentIndex}"]`)
-    scrollToCenter(row ?? null)
+    scrollRowToCenterIfHidden(row ?? null)
   }, [pageActive, currentIndex])
 
   if (loading && songs.length === 0) {

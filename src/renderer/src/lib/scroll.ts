@@ -69,20 +69,22 @@ export function centerTarget(g: RowGeometry): number {
   return clampTop(offsetOf(g) - slack, g)
 }
 
-/**
- * 「看得见就行」（等价 `block: 'nearest'`）所需的 scrollTop；**已经整行在视野里就返回 null**
- * （调用方据此决定「一动不动」，这也是它没有动画晃动的唯一来源）。
- *
- * ★ 只看行与视口的那两条边，露不出来才补 —— 不是把行摆到某个固定位置。
- */
-export function nearestTarget(g: RowGeometry): number | null {
+/** 整行是否已经落在可视范围内（两条边都要在里面） */
+export function rowVisible(g: RowGeometry): boolean {
   const viewTop = g.containerTop
-  const viewBottom = g.containerTop + g.containerHeight
-  if (g.rowTop >= viewTop && g.rowTop + g.rowHeight <= viewBottom) return null
-  /* 上方露不出来 → 行顶贴容器顶；下方露不出来 → 行底贴容器底 */
-  return g.rowTop < viewTop
-    ? clampTop(offsetOf(g), g)
-    : clampTop(offsetOf(g) + g.rowHeight - g.containerHeight, g)
+  return g.rowTop >= viewTop && g.rowTop + g.rowHeight <= viewTop + g.containerHeight
+}
+
+/**
+ * 「该不该动」的唯一判据：**已经整行在视野里 → null（一动不动）**，否则居中所需的 scrollTop。
+ *
+ * ★ 这就是「别每次打开都重新滚一遍」的全部实现：位置是容器自己记住的（页面槽与抽屉都
+ *   还原上次的 scrollTop），这里只负责回答「按现在这个位置，那一项还需要被找回来吗」。
+ * ★ 反过来，一旦要动就**居中**而不是「推回边缘」：贴着上/下边缘的那一下同样像「跳」，
+ *   而且刚滚到边缘时再看到的那一行，上下文只剩一半。
+ */
+export function centerIfHiddenTarget(g: RowGeometry): number | null {
+  return rowVisible(g) ? null : centerTarget(g)
 }
 
 /**
@@ -116,29 +118,19 @@ function measure(el: HTMLElement): { container: HTMLElement; geometry: RowGeomet
   }
 }
 
-/** 把 el 滚到它所在滚动容器的中间。返回「有没有真的动」 */
-export function scrollToCenter(
+/**
+ * **只在看不见时**把 el 摆到容器中间；已经看得见就一动不动（位置留给上次留下的那份）。
+ * 返回「有没有真的动」。
+ */
+export function scrollRowToCenterIfHidden(
   el: HTMLElement | null,
   behavior: ScrollBehavior = 'smooth'
 ): boolean {
   const m = el ? measure(el) : null
   // 容器还没有布局高度（页面槽刚挂上、或整块被藏起来）时没法谈「中间」，等下一次
   if (!m || m.geometry.containerHeight <= 0) return false
-  const top = centerTarget(m.geometry)
-  if (Math.abs(top - m.container.scrollTop) < 1) return false
-  m.container.scrollTo({ top, behavior })
-  return true
-}
-
-/** 只保证 el 看得见（已经在视野里就什么都不做）。返回「有没有真的动」 */
-export function scrollRowIntoView(
-  el: HTMLElement | null,
-  behavior: ScrollBehavior = 'smooth'
-): boolean {
-  const m = el ? measure(el) : null
-  if (!m || m.geometry.containerHeight <= 0) return false
-  const top = nearestTarget(m.geometry)
-  if (top === null) return false
+  const top = centerIfHiddenTarget(m.geometry)
+  if (top === null || Math.abs(top - m.container.scrollTop) < 1) return false
   m.container.scrollTo({ top, behavior })
   return true
 }
