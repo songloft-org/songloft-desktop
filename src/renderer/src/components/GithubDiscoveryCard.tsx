@@ -111,6 +111,12 @@ export function GithubDiscoveryCard({
       <p className="store-card-desc">{manifest.description || '暂无描述'}</p>
 
       <div className="store-card-tags">
+        {/*
+          来源标签摆在最前，与商店卡片上那个订阅源名（`sourceName`）同一格、同一样式：
+          搜索把两半来源混排进同一个网格，而卡片的形态又刻意做得一模一样 —— 不标出来，
+          哪些是「社区仓库里发现、未经审核」的就分不清了（那句话的免责也就不指向任何一张卡）。
+        */}
+        <span className="badge">GitHub 发现</span>
         {/* 仓库名在底行；这里给最容易被拿来比较的那两项：热度与申请了多少权限 */}
         <span className="badge">★ {repository.stars}</span>
         {action.tone ? (
