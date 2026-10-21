@@ -142,7 +142,10 @@ src/
    │                 useLocalFiles（本地文件的收件箱：路径 → 队列，免登录也能用，见 §8.16）/
    │                 usePlugins（已装扩展 + 顺序 + 运行时音频状态，唯一事实源）/
    │                 useLibrary（曲库数据的版本号 + 后台任务守望，见 §5.7）/
-   │                 song-metadata（起播时按缺口补齐元数据：只补缺失 / 超时 / 缓存 / 请服务端补齐）
+   │                 song-metadata（起播时按缺口补齐元数据：只补缺失 / 超时 / 缓存 / 请服务端补齐）/
+   │                 play-order（按播放模式重建播放顺序 order 的纯函数：
+   │                 随机 = 洗牌 + 当前曲留队首。★ 任何重建 order 的地方都必须走它——
+   │                 random 下若写成 identity，「下一首」就退化成按队列顺序，而图标还是随机）
    ├─ pages/         10 个页面：Home / Library / Playlists / PlaylistDetail / Favorites /
    │                 Recent / Search / Settings / Login / Extensions
    │                 （+ 同目录的 PluginStore，以及两个**页内视图**：FoldersView / LocalFilesView）

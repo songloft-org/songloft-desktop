@@ -124,6 +124,7 @@ import {
 } from '@/lib/format'
 import { requireClient, useAuth } from '@/state/useAuth'
 import { isMetadataRefreshRunning, isScanRunning, useLibrary } from '@/state/useLibrary'
+import { usePlayer } from '@/state/usePlayer'
 import { currentAccentHex, useSettings } from '@/state/useSettings'
 import { useUi, type SettingsSection } from '@/state/useUi'
 import { toast } from '@/state/useToasts'
@@ -607,9 +608,15 @@ function PlaybackSettings(): React.JSX.Element {
           <select
             className="input"
             style={{ width: 150 }}
+            /*
+             * 显示值读 settings.playMode（它跟着模式一起落盘、重启沿用），但**改动必须走播放
+             * 核心的 setPlayMode**：切到随机要顺手把播放顺序重洗一遍。只 patch 设置的话，
+             * 播放核心那边仍是旧模式 + 顺序的 order —— 底栏图标不变、点「下一首」照旧按队列
+             * 顺序走（这个缺陷就是这么来的，见 state/player-core 的 setPlayMode）。
+             */
             value={settings.playMode}
             onChange={(event) =>
-              void patch({ playMode: event.target.value as typeof settings.playMode })
+              usePlayer.getState().setPlayMode(event.target.value as typeof settings.playMode)
             }
           >
             <option value="loop">列表循环</option>

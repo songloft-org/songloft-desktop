@@ -58,6 +58,7 @@ import { parseLyrics, type ParsedLyric } from '@shared/lyric'
 import { songCoverUrl } from '@shared/metadata'
 import { buildCoverUrl, buildSongUrl, prefetchSongPath } from '@/lib/url'
 import { displayArtist } from '@/lib/format'
+import { orderForMode } from './play-order'
 import { resourceContext, useAuth } from './useAuth'
 import { useSettings } from './useSettings'
 import { resetPrefetch, schedulePrefetch } from './song-prefetch'
@@ -123,25 +124,6 @@ export interface PlayerState {
 
 const audio = new Audio()
 audio.preload = 'auto'
-
-function identityOrder(length: number): number[] {
-  return Array.from({ length }, (_, i) => i)
-}
-
-function shuffleIndices(length: number, keepFirst?: number): number[] {
-  const indices = identityOrder(length)
-  for (let i = indices.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[indices[i], indices[j]] = [indices[j], indices[i]]
-  }
-  if (keepFirst != null) {
-    const at = indices.indexOf(keepFirst)
-    if (at > 0) {
-      ;[indices[0], indices[at]] = [indices[at], indices[0]]
-    }
-  }
-  return indices
-}
 
 /* ─────────────────────── 歌词缓存 ─────────────────────── */
 
@@ -810,9 +792,8 @@ export const playerCore = create<PlayerState>((set, get) => {
       // 用户挑的歌单/歌曲：这是一轮新的播放，接着上一轮「全放不出来」的账不该算到它头上
       consecutiveFailures = 0
       const mode = get().playMode
-      const order =
-        mode === 'random' ? shuffleIndices(songs.length, startIndex) : identityOrder(songs.length)
-      const cursor = mode === 'random' ? order.indexOf(startIndex) : startIndex
+      const order = orderForMode(mode, songs.length, startIndex)
+      const cursor = order.indexOf(startIndex)
       set({ queue: songs, order, cursor: cursor >= 0 ? cursor : 0, context })
       await startSong(songs[startIndex], context)
     },
@@ -937,15 +918,16 @@ export const playerCore = create<PlayerState>((set, get) => {
       get().setPlayMode(modes[(modes.indexOf(current) + 1) % modes.length])
     },
 
+    /*
+     * ★ 切换播放模式必须走这里，**不许只改设置**：`order` 与 `playMode` 是同一条语义的两半
+     *   —— 只把 `playMode` 改成 random 而 `order` 还是 identity，`step()` 照样按队列顺序走
+     *   （表现是「界面上是随机，下一首却按顺序」）。设置页那个下拉框曾经就是直接 patch
+     *   设置的，缺陷正是这么来的；它现在也调用这个动作。
+     */
     setPlayMode: (mode) => {
       const { queue, cursor, order } = get()
       const currentIndex = cursor >= 0 && cursor < order.length ? order[cursor] : -1
-      let nextOrder = order
-      if (mode === 'random' && order.length > 0) {
-        nextOrder = shuffleIndices(queue.length, currentIndex >= 0 ? currentIndex : undefined)
-      } else if (mode !== 'random') {
-        nextOrder = identityOrder(queue.length)
-      }
+      const nextOrder = orderForMode(mode, queue.length, currentIndex)
       const nextCursor = currentIndex >= 0 ? nextOrder.indexOf(currentIndex) : -1
       set({ playMode: mode, order: nextOrder, cursor: nextCursor })
       void useSettings.getState().patch({ playMode: mode })
@@ -990,16 +972,20 @@ export const playerCore = create<PlayerState>((set, get) => {
     },
 
     moveInQueue: (from, to) => {
-      const { queue, order } = get()
+      const { queue, order, cursor, playMode } = get()
       if (from === to || from < 0 || to < 0 || from >= queue.length || to >= queue.length) return
-      const currentIndex = get().cursor >= 0 ? order[get().cursor] : -1
+      const currentIndex = cursor >= 0 && cursor < order.length ? order[cursor] : -1
       const nextQueue = [...queue]
       const [moved] = nextQueue.splice(from, 1)
       nextQueue.splice(to, 0, moved)
-      // 队列重排后顺序全部按新顺序走（随机模式的洗牌序列作废，符合直觉）
-      const nextOrder = identityOrder(nextQueue.length)
-      const nextCursor =
-        currentIndex >= 0 ? (from === currentIndex ? to : nextOrder.indexOf(currentIndex)) : -1
+      /*
+       * 队列重排后按**当前模式**重建顺序：非随机就是新队列的顺序，随机则重新洗牌。
+       * ★ 这里曾经一律写成 identity —— 拖着队列整理一次，随机模式就当场退化成「按队列顺序
+       *   一首一首来」，而图标还挂着随机。当前曲跟着它被拖到的新位置走，游标因此不跳。
+       */
+      const movedIndex = currentIndex < 0 || from !== currentIndex ? currentIndex : to
+      const nextOrder = orderForMode(playMode, nextQueue.length, movedIndex)
+      const nextCursor = movedIndex >= 0 ? nextOrder.indexOf(movedIndex) : -1
       set({ queue: nextQueue, order: nextOrder, cursor: nextCursor })
     },
 
@@ -1079,8 +1065,14 @@ export const playerCore = create<PlayerState>((set, get) => {
         )
         const valid = songs.filter((s): s is Song => s !== null)
         if (valid.length === 0) return
-        const order = identityOrder(valid.length)
-        const cursor = Math.min(Math.max(0, settings.lastQueueIndex), valid.length - 1)
+        /*
+         * 顺序按**当前播放模式**重建（`primeAudio()` 已在 App 启动编排里先跑过，这里的
+         * playMode 就是设置里那一档）：随机模式下写成 identity，重启后就会「图标是随机、
+         * 下一首却按队列顺序」—— 那是同一个缺陷的另一条入口。
+         */
+        const currentIndex = Math.min(Math.max(0, settings.lastQueueIndex), valid.length - 1)
+        const order = orderForMode(get().playMode, valid.length, currentIndex)
+        const cursor = order.indexOf(currentIndex)
         set({
           queue: valid,
           order,
@@ -1094,7 +1086,7 @@ export const playerCore = create<PlayerState>((set, get) => {
           currentTime: 0,
           duration: 0
         })
-        const song = valid[cursor]
+        const song = valid[currentIndex]
         if (song) {
           const url = buildSongUrl(song, resourceContext(), {
             quality: settings.quality,
