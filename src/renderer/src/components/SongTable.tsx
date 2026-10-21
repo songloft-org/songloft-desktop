@@ -10,7 +10,7 @@
  *   * 歌单上下文下支持拖拽重排（onReorder）
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { Song, SongSortField } from '@shared/types'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
@@ -18,8 +18,10 @@ import { openMenuFromEvent, type MenuItem } from './ContextMenu'
 import { IconGrip, IconHeart, IconMore, IconPause, IconPlay } from './Icons'
 import { Cover, EmptyState, InfiniteSentinel, SongRowsSkeleton } from './primitives'
 import { buildSongMenuItems, type SongMenuOptions } from './songMenu'
+import { usePageActive } from '@/hooks/usePageActive'
 import { SONGS_DRAG_TYPE } from '@/lib/dnd'
 import { displayAlbum, displayArtist, formatDuration, formatRelative } from '@/lib/format'
+import { scrollToCenter } from '@/lib/scroll'
 import { usePlayer } from '@/state/usePlayer'
 import { usePlaylists } from '@/state/usePlaylists'
 
@@ -166,6 +168,45 @@ export function SongTable({
 
   const visibleSongs = songs.length > maxRendered ? songs.slice(0, maxRendered) : songs
 
+  /*
+   * 当前曲在这份列表里的下标；不在列表里就是 -1。
+   *
+   * 三种「不在」共用一个 -1，因为它们该做的事完全一样 —— 什么都不做：
+   *   · 列表为空（歌单空 / 还在加载）；
+   *   · 播的是别处来的歌（播放源不是这张列表）；
+   *   · 歌已经被移出这张列表（右键「从歌单移除」/ 服务端刷新掉了）。
+   * 此时既不滚、也不高亮任何一行，界面回到「这一页只是一份列表」的状态。
+   *
+   * ★ 用 id 找而不是拿播放队列的下标去对：队列顺序（含随机）与列表顺序是两回事，
+   *   同一首歌在一张歌单里还可能出现两次 —— 那种情况下定位到**第一个**出现的位置。
+   */
+  const currentIndex = useMemo(
+    () => (currentSongId == null ? -1 : songs.findIndex((s) => s.id === currentSongId)),
+    [songs, currentSongId]
+  )
+
+  /*
+   * 把当前曲摆到列表**中间**（而不是「能看见就行」）。
+   *
+   * ★ 为什么不是只在挂载时跑一次：页面是常驻的（见 App 的 PageSlot），离开再回来不会
+   *   重新挂载 —— 用户「每次点开这份列表」看到的都还是上次的滚动位置。所以定位由
+   *   `pageActive`（这一页现在看不看得见）驱动：切回来就从当前曲重新算一次。
+   * ★ 换曲也跟着走（currentIndex 在依赖里），与播放队列面板同一个取舍：当前曲的标记
+   *   一旦被滚出视野，这一行「现在放到哪儿了」就再也看不出来了。
+   * ★ 依赖里**没有** songs 本身：列表内容变了但当前曲的相对位置没变时（在歌单内筛选、
+   *   搜索框改一个字母）不该再滚一次 —— 那会把用户刚看上的一屏又拽走。
+   * ★ 首尾的夹取在 scrollToCenter 里（见 lib/scroll.ts）：滚到 0 或滚到底就停，
+   *   不会为了「居中」把列表拉出一片空白。
+   */
+  const pageActive = usePageActive()
+  const tableRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!pageActive || currentIndex < 0) return
+    // 排在 maxRendered 之后的行根本不渲染（列表底部那条提示就是这么说的），找不到就什么都不做
+    const row = tableRef.current?.querySelector<HTMLElement>(`[data-song-index="${currentIndex}"]`)
+    scrollToCenter(row ?? null)
+  }, [pageActive, currentIndex])
+
   if (loading && songs.length === 0) {
     return (
       <div className="song-table">
@@ -186,7 +227,7 @@ export function SongTable({
   }
 
   return (
-    <div className="song-table">
+    <div className="song-table" ref={tableRef}>
       <div className="song-head" style={{ gridTemplateColumns: gridTemplate }}>
         {columns.map((column, i) => {
           const sortable = Boolean(column.sortField && onSortChange)
@@ -374,10 +415,15 @@ function SongRow({
     }
   }
 
+  /*
+   * data-song-index：当前曲定位靠它找行（见 SongTable 里那段 effect）。用**行下标**而
+   * 不是歌 id —— 同一首歌在一张歌单里出现两次时，id 认不出是哪一行。
+   */
   return (
     <div
       className="song-row"
       style={{ gridTemplateColumns: gridTemplate }}
+      data-song-index={index}
       data-current={current}
       data-selected={selected}
       data-drop-before={dropBefore}

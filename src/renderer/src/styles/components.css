@@ -318,6 +318,16 @@
   background: var(--accent-softer);
 }
 
+/* 当前正在播放的那一行：底色 + 行首一条竖条 + 标题染色。
+   ★ 只把标题染成强调色是不够的：歌单动辄上百行，滚过去根本认不出「现在放到哪首了」，
+     而这一行正是「被滚到中间」的那一行。多出来的这两笔（底色、竖条）就是给它的标记。
+   ★ 底色与 [data-selected] 撞了同一个 --accent-softer，区分靠竖条和序号位上那颗
+     常驻的播放钮（见下面那两条）—— 选中与「正在播」是两件事，不该长得一模一样。 */
+.song-row[data-current='true'] {
+  background: var(--accent-softer);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .song-row[data-current='true'] .song-title {
   color: var(--accent);
   font-weight: 620;
@@ -353,6 +363,18 @@
 
 .song-row:hover .song-index-play {
   display: grid;
+}
+
+/* 当前行的播放/暂停钮**常驻**（其它行 hover 才出），并且染成强调色。
+   于是「哪一行是当前曲」不必靠底色深浅去猜 —— 看序号列那颗图标就知道，
+   而它本身还是个能点的播放/暂停钮。 */
+.song-row[data-current='true'] .song-index-num {
+  display: none;
+}
+
+.song-row[data-current='true'] .song-index-play {
+  display: grid;
+  color: var(--accent);
 }
 
 .song-cell {
