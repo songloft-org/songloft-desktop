@@ -795,6 +795,11 @@ export function PluginStore(): React.JSX.Element {
             GitHub 那一半：搜索是跨来源的，用户在「全部订阅源」里搜插件名时，GitHub 社区里
             匹配的那些也一并列在这里（同一张卡片、同一条安装路径）。不列的话，「搜得到所有
             可安装的插件」只对恰好选中「GitHub 发现」那一格的人成立。
+
+            ★ 两半**排进同一个 .store-grid**，不各摆一个：两个网格各自换行的话，第一行末尾
+              剩下的空位就白扔了 —— GitHub 命中几个之后，订阅源的卡片会从新的一整行开始
+              排，看上去像两份互不相干的结果。混排之后卡片一路铺满，来源的差别只体现在
+              卡片自己的底行（仓库名 / 订阅源）与下面那句提示里。
           */}
           {keyword !== '' && discovery.loading && githubMatches.length === 0 ? (
             <p className="field-hint" style={{ marginTop: 10 }}>
@@ -803,25 +808,25 @@ export function PluginStore(): React.JSX.Element {
           ) : null}
 
           {githubMatches.length > 0 ? (
-            <>
-              <p className="field-hint" style={{ marginTop: 14 }}>
-                {`GitHub 社区里还匹配到 ${githubMatches.length} 个（来自「GitHub 发现」，未经审核）。`}
-              </p>
-              <ul className="store-grid">{githubMatches.map(renderDiscoveryCard)}</ul>
-            </>
+            <p className="field-hint" style={{ marginTop: 14 }}>
+              {`其中 ${githubMatches.length} 个来自 GitHub 社区（通过「GitHub 发现」找到，未经审核）。`}
+            </p>
           ) : null}
 
-          {!error && entries.length > 0 ? (
+          {githubMatches.length > 0 || (!error && entries.length > 0) ? (
             <ul className="store-grid">
-              {entries.map((entry) => (
-                <StoreCard
-                  key={registryRowKey(entry)}
-                  entry={entry}
-                  pending={pending === registryRowKey(entry)}
-                  disabled={pending !== null && pending !== registryRowKey(entry)}
-                  onInstall={() => void install(entry)}
-                />
-              ))}
+              {githubMatches.map(renderDiscoveryCard)}
+              {error
+                ? null
+                : entries.map((entry) => (
+                    <StoreCard
+                      key={registryRowKey(entry)}
+                      entry={entry}
+                      pending={pending === registryRowKey(entry)}
+                      disabled={pending !== null && pending !== registryRowKey(entry)}
+                      onInstall={() => void install(entry)}
+                    />
+                  ))}
             </ul>
           ) : null}
 
