@@ -4323,14 +4323,15 @@ html[data-mini='true'] .toasts {
   gap: 6px;
 }
 
-/* 「GitHub 发现」那张**固定卡片**：与 .source-row 同一套栅格（开关 │ 内容 │ 右侧动作），
-   但底色深一档、左侧一道强调色 —— 它不在下面那串「可以删的行」里，视觉上必须先分开，
-   否则用户会去找它的删除按钮（那正是它没有的东西）。
+/* 「GitHub 发现」那张**固定卡片**：与 .source-row 同一套栅格，但只有开关 │ 内容两列 ——
+   它没有右侧动作组（不可删除，也不提供清除 Token）。底色深一档、左侧一道强调色，
+   是为了把它从下面那串「可以删的行」里分出来：行尾少了那颗垃圾桶，视觉上就得先有区别，
+   否则用户会去找一个不存在的按钮。
    ★ 强调条用 inset 阴影而不是 border-left：后者会把内容整体右推 2px，
      与下面那些行的输入框左边界对不齐。 */
 .source-pinned {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
   align-items: start;
   padding: 12px;

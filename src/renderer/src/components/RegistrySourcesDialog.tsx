@@ -25,15 +25,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { getGithubDiscoveryToken, setGithubDiscoveryToken } from '@/api/endpoints'
 import { getPluginRegistries, updatePluginRegistries, type RegistrySource } from '@/api/plugins'
 import { GITHUB_DISCOVERY_NAME } from '@shared/ipc'
-import {
-  IconAlert,
-  IconClose,
-  IconLoader,
-  IconPlus,
-  IconRefresh,
-  IconStore,
-  IconTrash
-} from './Icons'
+import { IconAlert, IconLoader, IconPlus, IconStore, IconTrash } from './Icons'
 import { Modal } from './Modal'
 import { Switch } from './primitives'
 import { useAuth } from '@/state/useAuth'
@@ -115,10 +107,13 @@ export function RegistrySourcesDialog({
   /** 服务端上的 Token（null = 还没读到 / 读失败；空串 = 没配置） */
   const [serverToken, setServerToken] = useState<string | null>(null)
   const [tokenError, setTokenError] = useState<string | null>(null)
-  /** 用户新填的 Token。**不回填**，见文件头第 3 条 */
+  /**
+   * 用户新填的 Token。**不回填**，见文件头第 3 条。
+   *
+   * ★ 只有「填一个新的」这一条路：卡片上没有清除按钮 —— 留空就是不改动，要换就覆盖。
+   *   清空凭据是个不常做且容易误触的动作，摆在这里反而让「保存」变成一件有风险的事。
+   */
   const [tokenDraft, setTokenDraft] = useState('')
-  /** 明确要清掉服务端那份（与「留空 = 不改」区分开） */
-  const [tokenCleared, setTokenCleared] = useState(false)
   /** Token 的格式问题：显示在输入框下面，不混进整表那条错误里 */
   const [tokenProblem, setTokenProblem] = useState<string | null>(null)
 
@@ -134,7 +129,6 @@ export function RegistrySourcesDialog({
     setTokenProblem(null)
     setServerToken(null)
     setTokenDraft('')
-    setTokenCleared(false)
     /*
      * 两张表一起读：URL 源在服务端，GitHub 那一档的开关在本地设置。
      * Token 单独一路读，**失败不阻断**：Token 读不到只影响占位符里那句话，
@@ -227,7 +221,7 @@ export function RegistrySourcesDialog({
       return
     }
 
-    const nextToken = tokenCleared ? '' : tokenDraft.trim()
+    const nextToken = tokenDraft.trim()
     setSaving(true)
     setProblem(null)
     setTokenProblem(null)
@@ -250,25 +244,18 @@ export function RegistrySourcesDialog({
       }
 
       /*
-       * ★ 条件必须带上 `tokenCleared`：清除 Token 就是**保存空串**，只看 `nextToken` 的话
-       *   这条分支会被跳过 —— 界面显示「保存后清除」，实际什么都没发生。
+       * 只有**填了**才写：留空 = 不动服务端那份（不是「清除」）。卡片上也没有清除入口 ——
+       * 凭据能不能删，是服务端那一侧的事，不该由「点保存」顺带决定。
        */
-      if (tokenCleared || nextToken) {
+      if (nextToken) {
         try {
           const stored = await setGithubDiscoveryToken(client, nextToken)
-          if (tokenCleared) {
-            // 清除：服务器回空串才算成功（回了一个值说明它没照做）
-            if (stored) failures.push('GitHub Token 没有清除（服务器仍然返回了一个值）')
-            else setServerToken('')
-          } else if (!stored) {
-            /*
-             * 回了 2xx 却把 Token 吞掉（反代把 PUT 改写成 GET 之类）必须当场说清楚：
-             * 用户那边的表现是「保存了，再打开又是空的」，反复试也试不出来。
-             */
-            failures.push('服务器没有保存 GitHub Token（接口回了空值）')
-          } else {
-            setServerToken(stored)
-          }
+          /*
+           * 回了 2xx 却把 Token 吞掉（反代把 PUT 改写成 GET 之类）必须当场说清楚：
+           * 用户那边的表现是「保存了，再打开又是空的」，反复试也试不出来。
+           */
+          if (!stored) failures.push('服务器没有保存 GitHub Token（接口回了空值）')
+          else setServerToken(stored)
         } catch (reason) {
           failures.push(
             `GitHub Token 没有保存：${reason instanceof Error ? reason.message : '未知错误'}`
@@ -296,7 +283,6 @@ export function RegistrySourcesDialog({
 
   /** Token 那一格输入框的提示：几种状态都写在里面，省得另外摆一行说明 */
   const tokenPlaceholder = (): string => {
-    if (tokenCleared) return '保存后会清除 Token（想改成新的就直接填）'
     if (tokenDraft.trim()) return '将保存为新的 GitHub Token'
     if (tokenError) return `读取失败（${tokenError}），填一个即可覆盖`
     if (serverToken) return `已配置（末尾 ${serverToken.slice(-4)}），留空表示不修改`
@@ -305,7 +291,6 @@ export function RegistrySourcesDialog({
 
   /** 卡片右上角那枚状态徽标 */
   const tokenBadge = (): { text: string; accent: boolean } => {
-    if (tokenCleared) return { text: 'Token 将清除', accent: false }
     if (tokenDraft.trim()) return { text: 'Token 待保存', accent: true }
     if (tokenError) return { text: 'Token 读取失败', accent: false }
     if (serverToken) return { text: `Token 已配置 · 末尾 ${serverToken.slice(-4)}`, accent: true }
@@ -385,8 +370,6 @@ export function RegistrySourcesDialog({
               autoComplete="off"
               aria-label="GitHub Token"
               onChange={(event) => {
-                // 一动手填就把「清除」撤掉：填了新值当然不再是要删的那份
-                setTokenCleared(false)
                 setTokenProblem(null)
                 setTokenDraft(event.target.value)
               }}
@@ -407,25 +390,6 @@ export function RegistrySourcesDialog({
                 'Token 保存在当前连接的服务器上，连接它的客户端共用一份，出于安全不回填、只显示末尾四位。'
               }
             </p>
-          </div>
-
-          <div className="row" style={{ gap: 6 }}>
-            {/* 只有真有一份可清（或已经点了清除）时才出现：没有 Token 时那颗按钮没有含义 */}
-            {serverToken || tokenCleared ? (
-              <button
-                type="button"
-                className="icon-btn"
-                data-tip={tokenCleared ? '撤销清除' : '清除 Token'}
-                aria-label={tokenCleared ? '撤销清除 GitHub Token' : '清除 GitHub Token'}
-                onClick={() => {
-                  setTokenCleared((current) => !current)
-                  setTokenDraft('')
-                  setTokenProblem(null)
-                }}
-              >
-                {tokenCleared ? <IconRefresh size={16} /> : <IconClose size={16} />}
-              </button>
-            ) : null}
           </div>
         </div>
 

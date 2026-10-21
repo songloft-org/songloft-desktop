@@ -600,9 +600,10 @@ window.__t = {
     storeActions: vis('.store-card-action').map((e) => (e.textContent || '').trim()),
     storeCodes: vis('.store-card .store-card-code').map((e) => (e.textContent || '').trim()),
     /*
-     * 来源下拉里的每一格。
-     * ★ 「GitHub 发现」不是订阅源（它不进 mock 的源列表），只在这一格里出现 ——
-     *   所以只能这样断言它确实接上了，不能拿 sourceNames 去查。
+     * 来源下拉里的每一格（**顺序有含义**：全部 → GitHub 发现 → 各 URL 源）。
+     * ★ 「GitHub 发现」不进 mock 的源列表，所以只能在这一格上查，不能拿 sourceNames 去比。
+     * ★ 断言的是整串顺序而不只是「含这几个」：这一格曾经被单独塞进「社区」那个 optgroup，
+     *   而那正是「它和别的源不是一类东西」这种错觉的来处。
      */
     storeSources: vis('select[aria-label="筛选订阅源"] option').map((e) =>
       (e.textContent || '').trim()
@@ -1252,7 +1253,7 @@ const STEPS = [
       extNavs: containsAll('插件商店', '插件管理'),
       storeNames: containsAll('封面墙', '歌词补全', '豆瓣标签', '专辑墙'),
       storeActions: containsAll('安装', '更新至 v1.3.0', 'v0.9.3', '覆盖安装'),
-      storeSources: containsAll('全部订阅源', '官方源', 'GitHub 发现')
+      storeSources: equals('全部订阅源', 'GitHub 发现', '官方源', '私有源')
     }
   ],
   /*

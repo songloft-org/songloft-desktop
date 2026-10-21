@@ -668,29 +668,31 @@ export function PluginStore(): React.JSX.Element {
             setReloadToken((token) => token + 1)
           }}
         >
-          <optgroup label="订阅源">
-            <option value="">全部订阅源</option>
-            {sources.map((source) => (
-              <option key={source.url} value={source.url}>
-                {source.name || source.url}
-                {/* 停用的源不在聚合结果里，但单独看它是允许的 —— 标出来才不会被当成「源没了」 */}
-                {source.enabled ? '' : '（已停用）'}
-              </option>
-            ))}
-          </optgroup>
+          {/*
+            ★ 这一份是**平的**，不分 optgroup：「全部订阅源」是「上面这些的全集」，
+              而 GitHub 发现与各条 URL 源是同一层级的来源 —— 分组会让人以为它俩是两类东西
+              （「GitHub 发现」曾被单独摆进「社区」一组，正是这种错觉的来源）。
+              顺序固定为：全部 → GitHub 发现 → 各 URL 源，与「管理订阅源」里先卡片后列表一致。
+          */}
+          <option value="">全部订阅源</option>
           {/*
             ★ 这一格的值不是订阅源 URL —— 后端不认识它，`refreshRegistry` 也绝不能收到它；
               选中之后这一页换由 useGithubDiscovery 供数。
             ★ 它**固定存在**（「管理订阅源」里那张卡片不可删除），所以这里不带「有没有」的判断，
               只跟 `enabled` 走：停用就打上标注、且不再参与「全部订阅源」的聚合搜索。
-              「已停用」这一格仍然可选 —— 停用是「不参与聚合」，不是「不许看」（与上面那些源一致）。
+              「已停用」这一格仍然可选 —— 停用是「不参与聚合」，不是「不许看」（与下面那些源一致）。
           */}
-          <optgroup label="社区">
-            <option value={GITHUB_DISCOVERY}>
-              {GITHUB_DISCOVERY_NAME}
-              {discoverySource.enabled ? '' : '（已停用）'}
+          <option value={GITHUB_DISCOVERY}>
+            {GITHUB_DISCOVERY_NAME}
+            {discoverySource.enabled ? '' : '（已停用）'}
+          </option>
+          {sources.map((source) => (
+            <option key={source.url} value={source.url}>
+              {source.name || source.url}
+              {/* 停用的源不在聚合结果里，但单独看它是允许的 —— 标出来才不会被当成「源没了」 */}
+              {source.enabled ? '' : '（已停用）'}
             </option>
-          </optgroup>
+          ))}
         </select>
         {discoveryMode ? (
           <select
