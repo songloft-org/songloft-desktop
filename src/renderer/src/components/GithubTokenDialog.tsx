@@ -72,6 +72,19 @@ export function GithubTokenDialog({
       })
   }
 
+  /*
+   * 已配置时的输入框提示：星号掩码 + 末尾四位。
+   *
+   * 为什么要在 placeholder 里再写一遍末尾四位：输入框永远是空的（不回填凭据是刻意的），
+   * 光看它没法确认「服务器上到底存的是哪一串」，于是会以为保存没生效。
+   * 星号个数写死 8 颗而不是按 Token 长度取值 —— 占位符不该顺带泄露凭据长度。
+   */
+  const placeholder = loading
+    ? '正在读取服务器上的 Token…'
+    : token
+      ? `${'*'.repeat(8)}${token.slice(-4)}`
+      : '输入新的个人访问 Token（只需 public_repo 读权限）'
+
   return (
     <Modal
       title="GitHub Token"
@@ -119,7 +132,7 @@ export function GithubTokenDialog({
           className="input"
           type={visible ? 'text' : 'password'}
           value={draft}
-          placeholder="输入新的个人访问 Token（只需 public_repo 读权限）"
+          placeholder={placeholder}
           spellCheck={false}
           autoComplete="off"
           aria-label="GitHub Token"
