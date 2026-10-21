@@ -7,10 +7,14 @@
  *     由主进程逐个核对清单与 release 资产（见 hooks/useGithubDiscovery）。
  *     它在「管理订阅源」里是一张**固定卡片**（不可删除：没有注册表地址，也就没有「换一个」
  *     或「加回来」这回事），能改的只有开关与 Token —— 开关落在本地设置
- *     （`AppSettings.githubDiscovery`），停用后它不参与「全部订阅源」的聚合搜索。
+ *     （`AppSettings.githubDiscovery`），停用后它不参与「全部订阅源」的聚合。
  *     下拉里它固定占一格（停用时标注「已停用」），单独选中仍然能看。
  *   搜索框与来源下拉是「搜什么 + 搜哪儿」的两半，所以切到发现之后**同一个搜索框**就变成了
  *   GitHub 搜索（关键词还会顺带搜 owner/repo）。
+ *
+ * ★ 「全部订阅源」= 服务端聚合 + GitHub 发现（开关打开时），**浏览与搜索都算**：
+ *   选「全部」却只看到 URL 源那一半，等于这个下拉没兑现它写的字。两半分页各自独立，
+ *   同一个网格里先翻订阅源、翻完再翻 GitHub（见 loadMoreTail）。
  *
  * 订阅源那一份里，三件事一律交给后端判断、前端绝不自己算：**装没装**（installed）、
  * **能不能更新**（has_update）、**是不是撞了别人的 entryPath**（conflict / conflict_with）。
@@ -362,6 +366,12 @@ export function PluginStore(): React.JSX.Element {
     // page 本来就是 1 时 setPage 是空操作，靠 reloadToken 把 effect 捅醒
     setPage(1)
     setReloadToken((token) => token + 1)
+    /*
+     * 「全部订阅源」的一半是 GitHub：只刷订阅源那半的话，同一屏里另一半还是旧卡片 ——
+     * 而这个按钮上写的是「刷新商店」，用户不会按来源把它理解成「只刷新一半」。
+     * 单源模式（githubCards 为 false）没有那一半，也就不多打一次 GitHub。
+     */
+    if (githubCards && !discoveryMode) discovery.refresh()
   }
 
   const hasMore = !exhausted && entries.length < total
@@ -376,6 +386,22 @@ export function PluginStore(): React.JSX.Element {
     if (loading || !hasMore) return
     setPage((current) => current + 1)
   }, [loading, hasMore])
+
+  /**
+   * 尾部哨兵该翻哪一半。
+   *
+   * 「全部订阅源」把两套互相独立的分页（订阅源一页 / GitHub 一页）摆在同一个网格里，
+   * 却只有一个哨兵：先翻订阅源那半，它到底了再翻 GitHub 那半。两半同时翻的话，一次滚动
+   * 会窜出两批卡片，而且两半的「还有没有下一页」互不相干，屏幕上没法判断到底哪一半先没了。
+   *
+   * ★ 先把那个函数取出来再用：`discovery` 本身每渲染都是新对象，写进依赖等于每帧换一个
+   *   回调，IntersectionObserver 也就每帧重挂一次（见 InfiniteSentinel 的 effect 依赖）。
+   */
+  const loadDiscoveryMore = discovery.loadMore
+  const loadMoreTail = useCallback((): void => {
+    if (hasMore) loadMore()
+    else loadDiscoveryMore()
+  }, [hasMore, loadDiscoveryMore, loadMore])
 
   /**
    * 安装 / 更新 / 重新安装的**唯一**那条路。
@@ -600,10 +626,17 @@ export function PluginStore(): React.JSX.Element {
   }
 
   /**
-   * 订阅源那一侧搜索时，GitHub 命中/匹配出来的那些（发现页里它们自己就是主列表，这里为空）。
-   * 搜索是**跨来源**的：用户在「全部订阅源」里搜插件名，不该因为没切到发现页就搜不到。
+   * 订阅源那一侧要一并画出来的 GitHub 卡片（发现页里它们自己就是主列表，这里为空）。
+   *
+   * ★ 判据是 **`githubCards`**，不是「有没有关键词」：选中「全部订阅源」时，GitHub 发现
+   *   就是「全部」的一半 —— 浏览时也该出现它的卡片（只用关键词当条件的话，不搜东西就一张
+   *   GitHub 卡片都看不到，「全部」名不副实）。搜索时同样成立，而且那正是跨来源搜索要的。
+   * ★ 选中某条 URL 源时 `githubCards` 为 false，结果里绝不能混进 GitHub 的卡片 ——
+   *   用户明明选了「官方源」，看见社区卡片会以为下拉没生效。
    */
-  const githubMatches = discoveryMode ? [] : keyword ? discovery.plugins : []
+  const githubMatches = githubCards && !discoveryMode ? discovery.plugins : []
+  /** 「全部订阅源」下 GitHub 这一半还有下一页：它与订阅源那半各翻各的（见尾部那个哨兵） */
+  const moreDiscovery = githubMatches.length > 0 && discovery.hasMore && !discovery.error
 
   /**
    * 这一屏还有哪一半在路上。
@@ -639,7 +672,7 @@ export function PluginStore(): React.JSX.Element {
               : selectedSource
                 ? `只显示「${selectedSource.name || selectedSource.url}」里的扩展，安装与更新都在服务端完成。`
                 : discoverySource.enabled
-                  ? '列表来自服务端的扩展订阅源，搜索时也一并搜 GitHub 社区；安装与更新都在服务端完成。'
+                  ? '列表来自服务端的扩展订阅源与 GitHub 社区（「GitHub 发现」）；安装与更新都在服务端完成。'
                   : '列表来自服务端的扩展订阅源（「GitHub 发现」已停用，不参与聚合）；安装与更新都在服务端完成。'}
             {discoveryMode
               ? discovery.plugins.length > 0
@@ -838,13 +871,15 @@ export function PluginStore(): React.JSX.Element {
           {/*
             空态要等**两半来源都没结果**才摆：搜索是跨来源的（订阅源 + GitHub 社区），
             只因为订阅源这一半空着就说「没有匹配的扩展」，而 GitHub 那半还在查/刚查到，
-            等于给了一个假的结论。
+            等于给了一个假的结论。同理，那一半**失败了**也不摆空态 —— 由下面那条错误提示
+            交代原因，不然「没有可装的扩展」会把一次失败说成「本来就没有」。
           */}
           {!error &&
           !loading &&
           entries.length === 0 &&
           githubMatches.length === 0 &&
-          !(keyword !== '' && discovery.loading) ? (
+          !(githubCards && discovery.loading) &&
+          !(githubCards && discovery.error) ? (
             <EmptyState
               icon={<IconStore size={26} />}
               title={keyword ? '没有匹配的扩展' : '商店里还没有扩展'}
@@ -855,15 +890,31 @@ export function PluginStore(): React.JSX.Element {
                     ? `「${selectedSource.name || selectedSource.url}」里没有可装的扩展。`
                     : sources.length === 0
                       ? '还没有配置订阅源 —— 点右上角「管理订阅源」加一个。'
-                      : '已配置的订阅源里没有可装的扩展。'
+                      : githubCards
+                        ? '已配置的订阅源与 GitHub 社区里都没有可装的扩展。'
+                        : '已配置的订阅源里没有可装的扩展。'
               }
             />
           ) : null}
 
           {/*
-            GitHub 那一半：搜索是跨来源的，用户在「全部订阅源」里搜插件名时，GitHub 社区里
-            匹配的那些也一并列在这里（同一张卡片、同一条安装路径）。不列的话，「搜得到所有
-            可安装的插件」只对恰好选中「GitHub 发现」那一格的人成立。
+            GitHub 那一半出错：这一屏没有发现页那一块（错误态只在单独选中「GitHub 发现」
+            时才画整块），但「卡片少了一半」必须说出来，否则看起来就是这个社区里没有插件。
+          */}
+          {githubCards && !discoveryMode && discovery.error ? (
+            <div className="probe-result" data-state="error" style={{ marginTop: 10 }}>
+              <IconAlert size={15} />
+              <span>
+                {`GitHub 社区那一半没拉到：${discovery.error.message}`}
+                {retryHint}
+              </span>
+            </div>
+          ) : null}
+
+          {/*
+            GitHub 那一半：「全部订阅源」里它和订阅源同级 —— 浏览（不带关键词）时也列出来，
+            搜索时列的是跨来源的命中（同一张卡片、同一条安装路径）。不列的话，「全部订阅源」
+            只覆盖了 URL 源那一半，而 GitHub 是否出现取决于有没有关键词，看着像时好时坏。
 
             ★ 两半**排进同一个 .store-grid**，不各摆一个：两个网格各自换行的话，第一行末尾
               剩下的空位就白扔了 —— GitHub 命中几个之后，订阅源的卡片会从新的一整行开始
@@ -882,7 +933,12 @@ export function PluginStore(): React.JSX.Element {
 
           {hasCards ? (
             <ul className="store-grid">
-              {githubMatches.map(renderDiscoveryCard)}
+              {/*
+                浏览时**订阅源在前、GitHub 在后**：这个下拉叫「全部订阅源」，服务端那份是
+                主体，让社区卡片把官方的挤到首屏以下就本末倒置了。搜索时反过来 —— 有关键词
+                时两边都是「命中」，谁在前只影响扫视顺序，而 GitHub 那一半是照相关性排的。
+              */}
+              {keyword ? githubMatches.map(renderDiscoveryCard) : null}
               {error
                 ? null
                 : entries.map((entry) => (
@@ -894,6 +950,7 @@ export function PluginStore(): React.JSX.Element {
                       onInstall={() => void install(entry)}
                     />
                   ))}
+              {keyword ? null : githubMatches.map(renderDiscoveryCard)}
               {/* 还有一半在路上：尾部补一排骨架。不另起一节、也不摆转圈 —— 三者说的是
                   同一件事（「这儿还要长出卡片」），而只有骨架同时说清了长在哪儿、长多大 */}
               {pendingMore
@@ -911,15 +968,27 @@ export function PluginStore(): React.JSX.Element {
             到底的提示。★ 不能省：无限滚动的列表滚到底时「不再长出新行」与「卡住了」
             在屏幕上长得一模一样，用户只能靠反复上下来回滚来确认。给一句话，滚到底这件事
             就有了明确的下文。
-            列表为空时走上面那条空态，所以这里要求 entries 非空。
+            列表为空时走上面那条空态，所以这里要求有卡片；而「到底」要**两半都没了**才算，
+            只看订阅源那半的话，GitHub 那半还有下一页时也会说「已经到底了」。
           */}
-          {!error && !loading && entries.length > 0 && !hasMore ? (
+          {!error &&
+          !loading &&
+          (entries.length > 0 || githubMatches.length > 0) &&
+          !hasMore &&
+          !moreDiscovery ? (
             <p className="list-end">已经到底了</p>
           ) : null}
 
-          {/* key 跟着页码走：内容不够高时哨兵仍在视口里，观察器不会再来一次 —— 换一个元素
-              重新挂观察器，它会立刻以「当前可见」回调一次，列表就能一路续到填满视口为止 */}
-          {!error && hasMore ? <InfiniteSentinel key={page} onVisible={loadMore} /> : null}
+          {/* key 跟着页码（以及 GitHub 那半的条数）走：内容不够高时哨兵仍在视口里，
+              观察器不会再来一次 —— 换一个元素重新挂观察器，它会立刻以「当前可见」回调一次，
+              列表就能一路续到填满视口为止。disabled 只按「正在翻的到底是哪一半」判 */}
+          {!error && (hasMore || moreDiscovery) ? (
+            <InfiniteSentinel
+              key={`${page}-${githubMatches.length}`}
+              onVisible={loadMoreTail}
+              disabled={!hasMore && discovery.loadingMore}
+            />
+          ) : null}
         </>
       )}
 
