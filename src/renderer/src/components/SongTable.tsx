@@ -365,6 +365,7 @@ function SongRow({
   const favoriteIds = usePlaylists((s) => s.favoriteIds)
   const toggleFavorite = usePlaylists((s) => s.toggleFavorite)
   const favorited = favoriteIds.has(song.id)
+  const togglePlay = usePlayer((s) => s.toggle)
 
   const renderCell = (column: SongColumn): React.ReactNode => {
     switch (column.key) {
@@ -378,7 +379,10 @@ function SongRow({
               aria-label={current && playing ? '暂停' : '播放'}
               onClick={(event) => {
                 event.stopPropagation()
-                onPlay()
+                // 当前曲这一格画的就是播放/暂停（见 aria-label）：点它必须是暂停/继续，
+                // 而不是「从头再放一遍」。别的行仍然是「从这首开始播」。
+                if (current) void togglePlay()
+                else onPlay()
               }}
             >
               {current && playing ? <IconPause size={13} /> : <IconPlay size={13} />}
