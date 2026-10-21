@@ -549,8 +549,8 @@ export function PluginStore(): React.JSX.Element {
     setSourcesToken((token) => token + 1)
     setPage(1)
     setReloadToken((token) => token + 1)
-    // 订阅源管理里也能改 GitHub 的 Token（与发现页那颗按钮编辑的是同一份服务端凭据），
-    // 这里重读一次，那颗按钮上的「已配置 / 未配置」才不会停在旧结论上
+    // 订阅源管理里也能改 GitHub 的 Token（与「修改 Token」对话框编辑的是同一份服务端凭据），
+    // 这里重读一次，手头这份 Token 才不会停在旧结论上
     void discovery.reloadToken()
   }
 
@@ -652,35 +652,16 @@ export function PluginStore(): React.JSX.Element {
         </div>
 
         <div className="row">
-          {discoveryMode ? (
-            <button
-              type="button"
-              className="btn"
-              data-size="sm"
-              // 未配置时把这个状态直接写在按钮上：匿名只有 60 次/小时，翻两页就会撞上
-              // Token 存在服务端，没有会话就无处可读、也无处可存
-              data-tip={client ? undefined : '先连接服务器'}
-              disabled={!client}
-              onClick={() => {
-                setTokenOpen(true)
-                // 打开就重读一次：显示的是服务器上此刻的事实，不是本页挂载时读到的那一份
-                void discovery.reloadToken()
-              }}
-            >
-              <IconCloud size={14} />
-              {discovery.token ? 'GitHub Token' : 'GitHub Token（未配置）'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn"
-              data-size="sm"
-              onClick={() => setSourcesOpen(true)}
-            >
-              <IconSliders size={14} />
-              管理订阅源
-            </button>
-          )}
+          {/*
+            右上角**不随来源换一套按钮**：选中「GitHub 发现」只是把范围收窄，不是进另一个页面，
+            为了它多长出一颗「GitHub Token」会让每切一次源按钮都挪一次。
+            Token 配置在「管理订阅源」那张固定卡片里；Token 失效时，下面出错的那块另有
+            「修改 Token」直接到对话框。
+          */}
+          <button type="button" className="btn" data-size="sm" onClick={() => setSourcesOpen(true)}>
+            <IconSliders size={14} />
+            管理订阅源
+          </button>
           <button
             type="button"
             className="btn"
