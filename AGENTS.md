@@ -817,6 +817,19 @@ Linux 的文件关联把路径追加在 argv 里）、macOS 的 `open-file` 事�
 默认位置、不能因为目录建不出来就起不来」这条兜底都在 `src/shared/user-data.ts`，单测钉着
 （`user-data.test.ts`）。`pnpm run pack:win` 会同时产出 `.exe` 与 `.zip`，两份靠扩展名区分。
 
+### 8.19 `alive` 守卫必须在 effect 挂上时**重新置 true**（否则只在 dev 下无限转圈）
+
+「保存期间用户点了取消，别去动已经卸载的表单」这类守卫常写成
+`const alive = useRef(true)` + `useEffect(() => () => { alive.current = false }, [])`。
+它在**生产构建里是对的**，但 `main.tsx` 挂着 StrictMode：开发模式下 effect 会被跑成
+「挂上 → 卸下 → 再挂上」，只写卸载那一半的话，第二轮之后 `alive.current` **永远是 false**。
+后果是整条 `.then` / `.catch` / `.finally` 全部变成空操作 —— 表现为**按钮一直转圈圈、
+失败也不报错、成功也不关窗**（`GithubTokenDialog` 就踩过：点保存永远转，关掉再打开看着像没存上）。
+改法只有一行：effect 体里先 `alive.current = true`，再返回那半条清理。
+
+★ 这类缺陷**只在 `pnpm dev` 下出现**，`pnpm run e2e` 跑的是 `out/` 里的生产构建，抓不到 ——
+遇到「dev 里卡住、打包版正常」的交互，先怀疑 StrictMode 的 effect 双跑。
+
 ---
 
 ## 9. 不要做

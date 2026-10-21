@@ -60,6 +60,15 @@ export interface GithubDiscovery {
   /** Token / 代理读失败的原因（不影响匿名发现，只是少了一份凭据） */
   credentialError: string | null
   saveToken: (token: string) => Promise<void>
+  /**
+   * 重新从服务器读一次 Token（打开那个对话框时调）。
+   *
+   * ★ 手头那份是页面挂载时读的，可能早就过期了 —— 别的客户端改过、上一次保存其实没成功、
+   *   或者当初就读取失败（那时会退回空串）。对话框里显示的必须是**服务器上此刻**的事实，
+   *   否则就会出现「保存了，关掉再打开又是空的」这种无从判断的局面。
+   * ★ 它只换 token，不动代理、也不让发现请求重跑（token 没变时连对象引用都不换）。
+   */
+  reloadToken: () => Promise<void>
 }
 
 interface Credential {
@@ -357,13 +366,35 @@ export function useGithubDiscovery(input: {
 
   const saveToken = useCallback(
     async (next: string): Promise<void> => {
-      if (!client) return
+      if (!client) throw new Error('还没有连接服务器，无法保存 GitHub Token')
       const saved = await setGithubDiscoveryToken(client, next)
+      /*
+       * ★ 回了 2xx 却把 Token 吞掉的情况必须当场说清楚，不能当成功：反代把 PUT 改写成 GET、
+       *   中间那层把请求体丢掉，都会得到「200 + 一个空 token」。用户那边的表现是「保存了，
+       *   关掉再打开又是空的」—— 与其让他反复试，不如在这里就报错。
+       */
+      if (next.trim() && !saved) {
+        throw new Error('服务器没有保存这个 Token（接口回了空值），请确认后端版本后重试')
+      }
       // 只换 Token、不重读代理：代理那一半没变，再读一次只会慢一拍
       setCredential((previous) => ({ token: saved, proxy: previous?.proxy ?? '' }))
     },
     [client]
   )
+
+  const reloadToken = useCallback(async (): Promise<void> => {
+    if (!client) return
+    try {
+      const token = await getGithubDiscoveryToken(client)
+      setCredential((previous) => {
+        // 还没读完（凭据那段 effect 正在跑）或读到的与手头一致：什么都不用改
+        if (!previous || previous.token === token) return previous
+        return { ...previous, token }
+      })
+    } catch {
+      /* 读不到就保留手头这份：对话框里那句「读取失败」会说明原因 */
+    }
+  }, [client])
 
   /**
    * 这一屏要画的卡片。
@@ -411,6 +442,7 @@ export function useGithubDiscovery(input: {
     token: credential?.token ?? '',
     credentialLoading,
     credentialError,
-    saveToken
+    saveToken,
+    reloadToken
   }
 }

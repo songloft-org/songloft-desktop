@@ -38,14 +38,21 @@ export function GithubTokenDialog({
   const [visible, setVisible] = useState(false)
   const [saving, setSaving] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
-  /** 保存期间用户点了取消：别再去动已经卸载的表单 */
+  /**
+   * 保存期间用户点了取消：别再去动已经卸载的表单。
+   *
+   * ★ 必须在 effect **每次挂上时重新置 true**。`main.tsx` 挂着 StrictMode，开发模式下它会
+   *   把 effect 跑成「挂上 → 卸下 → 再挂上」：只写卸载那一半的话，第二轮之后 `alive` 永远是
+   *   false —— 于是保存成功不关窗、失败不报错、`saving` 也不复位，按钮就一直转圈圈。
+   *   生产构建里 StrictMode 不会重复跑 effect，所以这个坑只在 `pnpm dev` 下露出来。
+   */
   const alive = useRef(true)
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    alive.current = true
+    return () => {
       alive.current = false
-    },
-    []
-  )
+    }
+  }, [])
 
   const save = (value: string): void => {
     if (saving) return
@@ -89,11 +96,15 @@ export function GithubTokenDialog({
         </>
       }
     >
+      {/*
+        ★ 已配置时露出末尾四位：输入框里永远是空的（不回填凭据是刻意的），只写「已配置」
+          时用户没法确认存进去的就是那一串 —— 会以为「保存没生效、打开又是空的」。
+      */}
       <p className="field-hint" style={{ marginTop: 0 }}>
         {loading
           ? '正在读取服务器上的 Token…'
           : token
-            ? '当前服务器已配置 Token。'
+            ? `当前服务器已配置 Token（末尾 ${token.slice(-4)}）。`
             : '当前服务器未配置 Token（匿名访问每小时只有 60 次，一页发现就可能用光）。'}
       </p>
 

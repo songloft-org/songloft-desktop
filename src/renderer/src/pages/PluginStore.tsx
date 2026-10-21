@@ -550,7 +550,11 @@ export function PluginStore(): React.JSX.Element {
               // Token 存在服务端，没有会话就无处可读、也无处可存
               data-tip={client ? undefined : '先连接服务器'}
               disabled={!client}
-              onClick={() => setTokenOpen(true)}
+              onClick={() => {
+                setTokenOpen(true)
+                // 打开就重读一次：显示的是服务器上此刻的事实，不是本页挂载时读到的那一份
+                void discovery.reloadToken()
+              }}
             >
               <IconCloud size={14} />
               {discovery.token ? 'GitHub Token' : 'GitHub Token（未配置）'}
