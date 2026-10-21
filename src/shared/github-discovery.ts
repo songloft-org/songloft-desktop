@@ -90,7 +90,6 @@ export interface GithubDiscoveryPage {
 export interface GithubDiscoveryRequest {
   page: number
   search: string
-  sort: 'updated' | 'stars'
   /** GitHub 加速代理前缀（空串 = 直连） */
   proxy: string
   /** 服务器上保存的共享 Token（空串 = 匿名，每小时只有 60 次） */
@@ -310,12 +309,62 @@ export function discoverySearchQuery(search: string): string {
   }`
 }
 
-/** 搜索地址（排序与翻页都在 query 里） */
+/**
+ * 搜索地址（排序与翻页都在 query 里）。
+ *
+ * ★ **不带 `sort` 参数**：不指定时 GitHub 走它自己的 best-match —— 而「最好的一条」这件事
+ *   只有它知道（它会把名字命中、描述命中、README 命中的权重都算进去）。客户端要做的只是
+ *   在拿回来之后按「名字命中最狠的 → stars 多的 → 更新近的」再排一次（见 `rankDiscoveryPlugins`），
+ *   那两档它给不了。
+ */
 export function discoverySearchUrl(
-  request: Pick<GithubDiscoveryRequest, 'page' | 'search' | 'sort'>
+  request: Pick<GithubDiscoveryRequest, 'page' | 'search'>
 ): string {
   const query = encodeURIComponent(discoverySearchQuery(request.search))
-  return `https://api.github.com/search/repositories?q=${query}&sort=${request.sort}&order=desc&per_page=${DISCOVERY_PAGE_SIZE}&page=${request.page}`
+  return `https://api.github.com/search/repositories?q=${query}&order=desc&per_page=${DISCOVERY_PAGE_SIZE}&page=${request.page}`
+}
+
+/**
+ * 关键词在**名字**上的命中程度（4 最狠、0 = 名字里没有）。
+ *
+ * 只看名字与入口，不看描述：描述命中说明「相关」，但用户搜的是插件名，
+ * 「名字就叫这个」和「描述里提过一句」在结果列表里不是一回事。
+ */
+function nameMatchScore(plugin: GithubDiscoveryPlugin, term: string): number {
+  const name = plugin.manifest.name.trim().toLowerCase()
+  const entry = plugin.manifest.entryPath.trim().toLowerCase()
+  if (name === term || entry === term) return 4
+  if (name.startsWith(term) || entry.startsWith(term)) return 3
+  if (name.includes(term) || entry.includes(term)) return 2
+  if (plugin.repository.fullName.toLowerCase().includes(term)) return 1
+  return 0
+}
+
+/**
+ * 卡片的排列顺序 —— **固定的一条优先级链**：名字命中 → stars → 最近更新。
+ *
+ * 为什么不做成一个「排序方式」下拉：三种意图（相关性 / 热门 / 新）本来就是一条链上的
+ * 先后手，而不是三个互斥的世界 —— 拆成按钮之后，用户得先猜「我现在想看的是哪一类」，
+ * 而结果里往往三种都混着。搜关键词时第一步生效，浏览时直接落到 stars / 更新时间上。
+ *
+ * ★ 返回新数组，不改入参：调用方那份是 hook 的 state，就地排序会让「同一个引用内容变了」
+ *   这类问题变得很难查。
+ * ★ `updatedAt` 是 ISO 串，字典序即时间序，不必转 Date（转换还得处理拿不到日期的情况）。
+ */
+export function rankDiscoveryPlugins(
+  plugins: readonly GithubDiscoveryPlugin[],
+  keyword: string
+): GithubDiscoveryPlugin[] {
+  const term = keyword.trim().toLowerCase()
+  return plugins
+    .map((plugin) => ({ plugin, match: term ? nameMatchScore(plugin, term) : 0 }))
+    .sort(
+      (a, b) =>
+        b.match - a.match ||
+        b.plugin.repository.stars - a.plugin.repository.stars ||
+        b.plugin.repository.updatedAt.localeCompare(a.plugin.repository.updatedAt)
+    )
+    .map((entry) => entry.plugin)
 }
 
 /**

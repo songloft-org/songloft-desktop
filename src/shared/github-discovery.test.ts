@@ -14,6 +14,7 @@ import {
   matchesDiscoveryKeyword,
   parseGithubPluginManifest,
   parseReleaseDownload,
+  rankDiscoveryPlugins,
   toGithubRepository,
   verifyRelease,
   type GithubDiscoveryPlugin,
@@ -147,9 +148,10 @@ describe('搜索', () => {
     expect(discoverySearchQuery('电台')).toContain('电台 in:name,description,readme')
   })
 
-  it('搜索地址带上排序与翻页', () => {
-    const url = discoverySearchUrl({ page: 2, search: '', sort: 'stars' })
-    expect(url).toContain('sort=stars')
+  it('搜索地址不带 sort（交给 GitHub 的 best-match），翻页照旧在 query 里', () => {
+    const url = discoverySearchUrl({ page: 2, search: '' })
+    // 不带 sort 参数：谁更相关由 GitHub 判，客户端只在这之上再排「名字命中 → stars → 更新」
+    expect(url).not.toContain('sort=')
     expect(url).toContain('page=2')
     expect(url).toContain('per_page=20')
   })
@@ -161,6 +163,56 @@ describe('搜索', () => {
   it('按卡片上的插件名能命中（仓库名里并没有这几个字）', () => {
     expect(matchesDiscoveryKeyword(discovery(), '电台')).toBe(true)
     expect(matchesDiscoveryKeyword(discovery(), '时光机')).toBe(true)
+  })
+
+  /*
+   * 排序：一条固定的优先级链（名字命中最狠 → stars 多 → 更新近）。
+   * 这里逐档拆开断言，是因为「三档叠在一起」时只要有一档写反，结果往往**看起来还挺对**。
+   */
+  describe('rankDiscoveryPlugins', () => {
+    const card = (name: string, stars: number, updatedAt: string): GithubDiscoveryPlugin =>
+      discovery({
+        manifest: manifest({ name, entryPath: name }),
+        repository: { ...REPO, stars, updatedAt }
+      })
+    const names = (plugins: GithubDiscoveryPlugin[]): string[] =>
+      plugins.map((plugin) => plugin.manifest.name)
+
+    it('名字整串相等排在「只包含」前面，哪怕后者星数高得多', () => {
+      const exact = card('电台', 0, '2026-01-01T00:00:00Z')
+      const partial = card('电台时光机', 900, '2026-10-01T00:00:00Z')
+      expect(names(rankDiscoveryPlugins([partial, exact], '电台'))).toEqual(['电台', '电台时光机'])
+    })
+
+    it('名字命中程度一样时按 stars 降序', () => {
+      const low = card('电台', 3, '2026-10-01T00:00:00Z')
+      const high = card('电台', 88, '2026-01-01T00:00:00Z')
+      expect(names(rankDiscoveryPlugins([low, high], '电台'))).toEqual(['电台', '电台'])
+      expect(rankDiscoveryPlugins([low, high], '电台')[0].repository.stars).toBe(88)
+    })
+
+    it('stars 一样时按更新时间降序', () => {
+      const older = card('电台', 10, '2026-01-01T00:00:00Z')
+      const newer = card('电台', 10, '2026-09-01T00:00:00Z')
+      expect(rankDiscoveryPlugins([older, newer], '电台')[0].repository.updatedAt).toBe(
+        '2026-09-01T00:00:00Z'
+      )
+    })
+
+    it('没有关键词时跳过「名字命中」这一档，直接看 stars', () => {
+      const few = card('新插件', 2, '2026-10-01T00:00:00Z')
+      const many = card('老插件', 500, '2026-01-01T00:00:00Z')
+      expect(names(rankDiscoveryPlugins([few, many], ''))).toEqual(['老插件', '新插件'])
+    })
+
+    it('不改动入参（调用方那份是 hook 的 state）', () => {
+      const input = [
+        card('电台', 1, '2026-01-01T00:00:00Z'),
+        card('电台', 9, '2026-01-01T00:00:00Z')
+      ]
+      rankDiscoveryPlugins(input, '电台')
+      expect(input.map((plugin) => plugin.repository.stars)).toEqual([1, 9])
+    })
   })
 
   it('入口 / 作者 / owner-repo 也算身份', () => {

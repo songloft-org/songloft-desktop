@@ -32,6 +32,8 @@ export interface SettingSelectProps<T extends string | number> {
   disabled?: boolean
   /** 触发器宽度（px）；不传则按内容自适应 */
   width?: number
+  /** 触发器自身的样式（例如在 flex 行里要 `flex: none`，别被同行的输入框挤窄） */
+  style?: React.CSSProperties
 }
 
 export function SettingSelect<T extends string | number>({
@@ -40,7 +42,8 @@ export function SettingSelect<T extends string | number>({
   onChange,
   ariaLabel,
   disabled,
-  width
+  width,
+  style
 }: SettingSelectProps<T>): React.JSX.Element {
   const ref = useRef<HTMLButtonElement>(null)
   // 只为把 aria-expanded 说准：读宿主的真实状态，不另存一份「我开着」的本地状态
@@ -77,7 +80,7 @@ export function SettingSelect<T extends string | number>({
       ref={ref}
       type="button"
       className="select-trigger"
-      style={width ? { width } : undefined}
+      style={width || style ? { ...(width ? { width } : null), ...style } : undefined}
       disabled={disabled}
       aria-label={ariaLabel}
       aria-haspopup="menu"

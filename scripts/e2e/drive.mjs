@@ -599,16 +599,23 @@ window.__t = {
     storeNames: vis('.store-card .store-card-name').map((e) => (e.textContent || '').trim()),
     storeActions: vis('.store-card-action').map((e) => (e.textContent || '').trim()),
     storeCodes: vis('.store-card .store-card-code').map((e) => (e.textContent || '').trim()),
-    /*
-     * 来源下拉里的每一格（**顺序有含义**：全部 → GitHub 发现 → 各 URL 源）。
-     * ★ 「GitHub 发现」不进 mock 的源列表，所以只能在这一格上查，不能拿 sourceNames 去比。
-     * ★ 断言的是整串顺序而不只是「含这几个」：这一格曾经被单独塞进「社区」那个 optgroup，
-     *   而那正是「它和别的源不是一类东西」这种错觉的来处。
+    /**
+     * 来源下拉**触发器**上写着的当前范围（它现在是个按钮，不是原生 select）。
+     *
+     * 选项本身要点开菜单才看得见，所以那部分交给下面两步（43b / 43c）。
      */
-    storeSources: vis('select[aria-label="筛选订阅源"] option')
-      /* 跳过那条分隔项（禁用的 option）：它不是可选项，名字是一串制表符 */
-      .filter((e) => !e.disabled)
-      .map((e) => (e.textContent || '').trim()),
+    storeSourceTrigger: (vis('button[aria-label="筛选订阅源"]')[0]?.textContent || '').trim(),
+    /**
+     * 单选下拉面板里各条的**标题**（不含第二行说明）。
+     *
+     * ★ 不能直接量按钮的 textContent：带 desc 的条目是「标题 + 说明」两段，拼起来是
+     *   「全部订阅源聚合所有已启用的源」，看着像文案出错。
+     */
+    sourceMenuLabels: vis('.context-menu .menu-text > span:first-child').map((e) =>
+      (e.textContent || '').trim()
+    ),
+    /** 当前开着几层菜单（面板关掉时整块不渲染） */
+    menus: vis('.context-menu').length,
     /** 订阅源对话框里那张固定卡片（「GitHub 发现」：不可删除，只有开关与 Token） */
     discoveryCards: vis('.source-pinned').length,
     discoveryCardTitle: vis('.source-pinned .source-pinned-title')[0]?.textContent ?? '',
@@ -1254,9 +1261,29 @@ const STEPS = [
       extNavs: containsAll('插件商店', '插件管理'),
       storeNames: containsAll('封面墙', '歌词补全', '豆瓣标签', '专辑墙'),
       storeActions: containsAll('安装', '更新至 v1.3.0', 'v0.9.3', '覆盖安装'),
-      storeSources: equals('全部订阅源', 'GitHub 发现', '官方源', '私有源')
+      storeSourceTrigger: exactly('全部订阅源')
     }
   ],
+  /*
+   * 来源下拉（SettingSelect：面板挂在菜单宿主上，选项**点开才看得见**）。
+   *
+   * 断两个东西：
+   *   · 顺序（全部 → GitHub 发现 → 各 URL 源），而且**中间没有分隔线**：
+   *     「GitHub 发现」与别的源是同一层级的来源，被单独隔出来（或塞进 optgroup）
+   *     会被读成「它是另一类东西」；
+   *   · 面板本身（menus = 1 / 0）：触发器点了没反应的话，上面那条断言会空过。
+   */
+  [
+    '43b-store-source-menu',
+    'window.__t.click(\'button[aria-label="筛选订阅源"]\')',
+    700,
+    {
+      menus: exactly(1),
+      sourceMenuLabels: equals('全部订阅源', 'GitHub 发现', '官方源', '私有源'),
+      menuDividers: exactly(0)
+    }
+  ],
+  ['43c-store-source-menu-closed', "window.__t.key('Escape')", 600, { menus: exactly(0) }],
   /*
    * 订阅源管理弹窗：两块内容，断言也分开。
    *

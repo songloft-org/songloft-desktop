@@ -21,6 +21,7 @@ import {
   discoveryRowKey,
   matchesDiscoveryCardKeyword,
   matchesDiscoveryKeyword,
+  rankDiscoveryPlugins,
   type DiscoveryFailure,
   type GithubDiscoveryPlugin,
   type GithubDiscoveryResult
@@ -117,13 +118,15 @@ function mergeDiscoveryCatalog(
 }
 
 export function useGithubDiscovery(input: {
-  /** 当前是不是选中了「GitHub 发现」这一份来源 —— 没选中时一个请求都不发 */
+  /**
+   * 这一屏要不要 GitHub 的卡片（选中了发现页，或「全部订阅源」的聚合里带着它）。
+   * 为 false 时一个请求都不发。
+   */
   active: boolean
   /** 已经防抖过的关键词（与订阅源那一份共用搜索框） */
   keyword: string
-  sort: 'updated' | 'stars'
 }): GithubDiscovery {
-  const { active, keyword, sort } = input
+  const { active, keyword } = input
   const client = useAuth((state) => state.client)
 
   const [credential, setCredential] = useState<Credential | null>(null)
@@ -161,12 +164,13 @@ export function useGithubDiscovery(input: {
   /** 只有点「刷新」这一次要越过主进程的清单缓存 */
   const forceRef = useRef(false)
   /**
-   * 哪一种排序已经拉过「不带关键词的那一页」（副查询）。
+   * 「不带关键词的那一页」已经拉过了吗（副查询，见下面那段说明）。
    *
    * 记成 ref 而不是 state：它只用来「别再拉第二次」，写进 state 会自己成为依赖、再触发一轮。
-   * 每换一种排序拉一次 —— 不同的排序，前 20 个仓库根本不是同一批。
+   * 排序不再是一个可选项（固定成一条优先级链，见 `rankDiscoveryPlugins`），
+   * 所以一份就够 —— 以前按排序各拉一次，是因为不同排序下前 20 个仓库不是同一批。
    */
-  const seededSort = useRef<string | null>(null)
+  const seeded = useRef(false)
 
   // ── 凭据 ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -267,7 +271,6 @@ export function useGithubDiscovery(input: {
       .discover({
         page: 1,
         search: keyword,
-        sort,
         proxy: credential.proxy,
         token: credential.token,
         force
@@ -289,7 +292,7 @@ export function useGithubDiscovery(input: {
       })
 
     /*
-     * ★ 副查询：**不带关键词的同一页**，每种排序只拉一次。
+     * ★ 副查询：**不带关键词的同一页**，整个会话只拉一次。
      *
      *   为什么非要它：GitHub 的仓库搜索只认仓库名 / 描述 / README，而卡片上写的是清单里的
      *   插件名 —— 仓库叫 `songloft-plugin-radio`、插件叫「电台时光」，用户照着卡片上的名字搜，
@@ -299,13 +302,12 @@ export function useGithubDiscovery(input: {
      *   代价：这一页恰好就是不带关键词浏览时的那一页，清单在主进程按仓库缓存一小时 ——
      *   翻过一遍之后再搜基本不额外花配额。它也不进任何列表、不改统计（`seed`）。
      */
-    if (searching && seededSort.current !== sort) {
-      seededSort.current = sort
+    if (searching && !seeded.current) {
+      seeded.current = true
       void window.songloft.github
         .discover({
           page: 1,
           search: '',
-          sort,
           proxy: credential.proxy,
           token: credential.token,
           force: false
@@ -317,7 +319,7 @@ export function useGithubDiscovery(input: {
         // 这一页只是「让搜索更准」，失败了不影响主查询，安静收掉
         .catch(() => undefined)
     }
-  }, [active, credential, keyword, sort, nonce, report, applyPage])
+  }, [active, credential, keyword, nonce, report, applyPage])
 
   // ── 续页 ────────────────────────────────────────────────────────────────
   const loadMore = useCallback((): void => {
@@ -329,7 +331,6 @@ export function useGithubDiscovery(input: {
       .discover({
         page: nextPage,
         search: keyword,
-        sort,
         proxy: credential.proxy,
         token: credential.token,
         force: false
@@ -349,18 +350,18 @@ export function useGithubDiscovery(input: {
       .finally(() => {
         if (current === generation.current) setLoadingMore(false)
       })
-  }, [applyPage, credential, keyword, loading, loadingMore, nextPage, report, sort])
+  }, [applyPage, credential, keyword, loading, loadingMore, nextPage, report])
 
   const refresh = useCallback((): void => {
     forceRef.current = true
     /*
      * 「刷新」= 手头的卡片一概不信（作者刚发过版，清单可能已经变了）：三份列表一起清，
-     * 连「这一种排序已经拉过副查询」这件事也忘掉 —— 下一次搜索要重新核对一遍。
+     * 连「副查询已经拉过」这件事也忘掉 —— 下一次搜索要重新核对一遍。
      */
     setBrowse([])
     setKnown([])
     setHits([])
-    seededSort.current = null
+    seeded.current = false
     setCredentialNonce((value) => value + 1)
     setNonce((value) => value + 1)
   }, [])
@@ -400,9 +401,9 @@ export function useGithubDiscovery(input: {
   /**
    * 这一屏要画的卡片。
    *
-   * · 没有关键词：就是「逛」的那一份（GitHub 按当前排序给的列表）；
-   * · 有关键词：**GitHub 命中的**（保持它的相关性顺序）在前，接着是**本地比出来的**那些
-   *   （插件名 / 入口 / 作者 / `owner/repo`，见 `matchesDiscoveryKeyword`）。
+   * · 没有关键词：就是「逛」的那一份（GitHub 给的那一页，再按固定优先级排一次）；
+   * · 有关键词：**GitHub 命中的**在前，接着是**本地比出来的**那些（插件名 / 入口 / 作者 /
+   *   `owner/repo`，见 `matchesDiscoveryKeyword`），整份再排一次。
    *
    * ★ 两半缺一不可：GitHub 那一半按仓库字段搜，能把还没核对过的仓库带进来；本地那一半才认
    *   卡片上写着的插件名。只留任一半都会出现「明明在列表里，搜名字却搜不到」。
@@ -410,22 +411,21 @@ export function useGithubDiscovery(input: {
    *   一句」的仓库会混进来（搜「知音」，几个写着「可灌入知音插件」的仓库全被带了出来），
    *   而卡片上根本没有那两个字。卡上没写的词不该成为它出现在结果里的理由 ——
    *   见 `matchesDiscoveryCardKeyword`（那份判据比全目录匹配多认一条清单描述）。
+   * ★ 最后统一过一遍 `rankDiscoveryPlugins`：GitHub 给的顺序只有「相关性」这一个维度，
+   *   而列表要的是「名字最像的 → 社区最认的 → 最近还在动的」这条固定链条。
    */
   const plugins = useMemo(() => {
-    if (keyword.trim() === '') return browse
+    if (keyword.trim() === '') return rankDiscoveryPlugins(browse, '')
     const byKey = new Map(known.map((plugin) => [discoveryRowKey(plugin), plugin]))
     const hitKeys = new Set(hits)
-    const ranked = [...hitKeys]
+    const fromGithub = [...hitKeys]
       .map((key) => byKey.get(key))
       .filter((plugin): plugin is GithubDiscoveryPlugin => plugin != null)
       .filter((plugin) => matchesDiscoveryCardKeyword(plugin, keyword))
-    return [
-      ...ranked,
-      ...known.filter(
-        (plugin) =>
-          !hitKeys.has(discoveryRowKey(plugin)) && matchesDiscoveryKeyword(plugin, keyword)
-      )
-    ]
+    const fromLocal = known.filter(
+      (plugin) => !hitKeys.has(discoveryRowKey(plugin)) && matchesDiscoveryKeyword(plugin, keyword)
+    )
+    return rankDiscoveryPlugins([...fromGithub, ...fromLocal], keyword)
   }, [browse, known, hits, keyword])
 
   return {

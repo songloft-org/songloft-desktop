@@ -64,6 +64,7 @@ import {
 import { PluginIconFallback } from '@/components/PluginIcon'
 import { EmptyState, InfiniteSentinel } from '@/components/primitives'
 import { RegistrySourcesDialog } from '@/components/RegistrySourcesDialog'
+import { SettingSelect, type SelectOption } from '@/components/SettingSelect'
 import { useGithubDiscovery } from '@/hooks/useGithubDiscovery'
 import { buildResourceUrl } from '@/lib/url'
 import { resourceContext, useAuth } from '@/state/useAuth'
@@ -84,22 +85,19 @@ const PAGE_SIZE = 20
 const GITHUB_DISCOVERY = '__discovery__'
 
 /**
- * 来源下拉里「全部订阅源」与它下面那些源之间的分隔项。
+ * 源地址的主机名 —— 下拉里那行说明用。
  *
- * ★ 用它而不是缩进：`<option>` 里的前导空白既可能被折叠、宽度也随字体飘（EM SPACE 在中文字体
- *   里正好一格、在别处未必），看起来更像是「不小心多打了个空格」，而不是「这是一个总项」。
- * ★ 用它而不是 `<optgroup>`：组标签**不可选**，而「全部订阅源」恰恰是那个必须能选中的总项。
- * ★ 用**禁用的 option** 而不是 `<hr>`：`<hr>` 在 select 弹层里画的是浏览器自己的那条线，
- *   颜色跟着正文走 —— 与其它选项一个色，它会被读成「一个叫 ──────── 的源」。
- *   禁用项的样式由我们控制（见 CSS 里的 [data-separator]），且照样点不动、不占键盘导航。
- * ★ 值给一个不可能被选中的哨兵：不给 value 的禁用项在某些浏览器里仍能被脚本选中。
+ * 整串 URL 有六七十个字符，塞进菜单会把面板撑到半个窗口宽；而「这是哪个源」看主机名
+ * 基本就够了（完整地址在「管理订阅源」里，那里才是改它的地方）。解析不了就原样退回：
+ * 地址合不合法由后端判，这里不替它下结论。
  */
-const SOURCE_SEPARATOR_VALUE = '__separator__'
-const SOURCE_SEPARATOR = (
-  <option value={SOURCE_SEPARATOR_VALUE} disabled data-separator="">
-    {'─'.repeat(26)}
-  </option>
-)
+function sourceHost(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
 
 /** 一次安装要交给服务端的那几样东西（两个来源共用同一条路，只有取法不同） */
 interface InstallTarget {
@@ -148,8 +146,7 @@ export function PluginStore(): React.JSX.Element {
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [sourcesToken, setSourcesToken] = useState(0)
 
-  /* GitHub 发现：排序、Token 对话框、服务器版本、本次会话装上的那些 */
-  const [sort, setSort] = useState<'updated' | 'stars'>('updated')
+  /* GitHub 发现：Token 对话框、服务器版本、本次会话装上的那些 */
   const [tokenOpen, setTokenOpen] = useState(false)
   const [hostVersion, setHostVersion] = useState('')
   /** 选中的是「GitHub 发现」而不是某个订阅源 */
@@ -173,22 +170,21 @@ export function PluginStore(): React.JSX.Element {
    * 这一页现在有没有 GitHub 卡片要画。
    *
    * ★ **搜索范围跟着下拉走**，这条是「选源」这件事的全部含义：
-   *   · 选中「全部订阅源」（`sourceUrl === ''`）—— 聚合，GitHub 那一半也进来（没被停用时）；
+   *   · 选中「全部订阅源」（`sourceUrl === ''`）—— 聚合，GitHub 那一半也进来（没被停用时）。
+   *     它和别的源一样是「全部」的一部分：不带关键词也照样列出来（浏览时也有它的卡片），
+   *     否则「全部」就名不副实；
    *   · 选中某条 URL 源 —— **只搜那一个源**。这时候再把 GitHub 的结果混进来，
    *     用户会以为下拉没生效（他明明选了「官方源」，却看见 GitHub 的卡片）；
    *   · 选中「GitHub 发现」—— 只有它（`discoveryMode`）。
-   *   不带关键词时仍只有发现页才发请求（一次发现要逐仓库核对，不该为打开商店白花配额）。
    */
-  const githubCards =
-    discoveryMode || (sourceUrl === '' && keyword !== '' && discoverySource.enabled)
+  const githubCards = discoveryMode || (sourceUrl === '' && discoverySource.enabled)
   /**
    * ★ 没有 GitHub 卡片要画时 `active` 为 false：那个 hook 连一个请求都不发。
    *   关键词用父组件那份**已防抖**的 —— 搜索框是两半来源共用的同一颗。
    */
   const discovery = useGithubDiscovery({
     active: githubCards && client !== null,
-    keyword,
-    sort
+    keyword
   })
 
   /**
@@ -243,6 +239,39 @@ export function PluginStore(): React.JSX.Element {
 
   /** 当前筛选的那个源（没筛选时、或在发现页时为 undefined） */
   const selectedSource = sources.find((source) => source.url === sourceUrl)
+
+  /**
+   * 来源下拉的选项。
+   *
+   * ★ 每一项都给 desc（分隔项除外）：菜单按「任一档带说明就整层两行高」排，
+   *   只给一部分的话条目高低不齐，看着像排版出了错。
+   * ★ desc 放**主机名**而不是整串地址：六七十个字符的 URL 会把面板撑到半个窗口宽，
+   *   而「这是哪个源」看主机名基本就够（完整地址在「管理订阅源」里能改）。
+   * ★ 停用的源仍然列出来、也仍然可选：停用是「不参与聚合」，不是「不许看」——
+   *   从下拉里悄悄消失的话，看起来就像「源没了」。
+   */
+  const sourceOptions = useMemo<SelectOption<string>[]>(
+    () => [
+      {
+        value: '',
+        label: '全部订阅源',
+        desc: discoverySource.enabled ? '聚合所有已启用的源 · 含 GitHub 发现' : '聚合所有已启用的源'
+      },
+      // ★ 不做分隔线、也不分组：「GitHub 发现」与各条 URL 源是**同一层级的来源**，
+      //   把它单独隔出来（或塞进 optgroup）会被读成「它是另一类东西」。
+      {
+        value: GITHUB_DISCOVERY,
+        label: GITHUB_DISCOVERY_NAME,
+        desc: discoverySource.enabled ? '按 topic 搜 GitHub 上的社区插件' : '已停用 · 不参与聚合'
+      },
+      ...sources.map((source) => ({
+        value: source.url,
+        label: source.name || source.url,
+        desc: `${sourceHost(source.url)}${source.enabled ? '' : ' · 已停用'}`
+      }))
+    ],
+    [sources, discoverySource.enabled]
+  )
   /** 它的 token（没有筛选、或它是公开源时为空串） */
   const sourceToken = selectedSource?.token ?? ''
 
@@ -583,7 +612,7 @@ export function PluginStore(): React.JSX.Element {
    * 由网格**尾部**的骨架卡占住位置 —— 这里就是「要不要摆那几张」的判据。续页也算：
    * `loading` 覆盖首屏 / 搜索 / 刷新，`discovery.loadingMore` 是发现那半的续页。
    */
-  const pendingMore = loading || (keyword !== '' && (discovery.loading || discovery.loadingMore))
+  const pendingMore = loading || (githubCards && (discovery.loading || discovery.loadingMore))
   /** 已经有卡片可画：这时骨架只在尾部补几张，而不是整块重摆 */
   const hasCards = githubMatches.length > 0 || (!error && entries.length > 0)
 
@@ -601,7 +630,12 @@ export function PluginStore(): React.JSX.Element {
               不写清楚的话那看起来只是「结果变了」而不是「范围变了」。
             */}
             {discoveryMode
-              ? '按 GitHub 上的 songloft-plugin topic 自动发现社区插件；列出来的每一条都核对过清单与发布资产，安装仍在服务端完成。'
+              ? [
+                  '只显示 GitHub 社区里发现的扩展（按 songloft-plugin topic 搜出来，',
+                  '每一条都核对过清单与发布资产），安装仍在服务端完成。',
+                  // 免责跟着这一句走：社区插件没过审核，格式校验也不等于安全审核
+                  '这些扩展未经 Songloft 审核，格式校验不代表安全审核。'
+                ].join('')
               : selectedSource
                 ? `只显示「${selectedSource.name || selectedSource.url}」里的扩展，安装与更新都在服务端完成。`
                 : discoverySource.enabled
@@ -675,70 +709,33 @@ export function PluginStore(): React.JSX.Element {
           style={{ flex: '1 1 auto', minWidth: 0 }}
           onChange={(event) => setInput(event.target.value)}
         />
-        <select
-          className="input"
+        {/*
+          下拉换成 SettingSelect（与设置页同一个组件）：原生 <select> 的弹层由浏览器画，
+          改不了圆角、悬浮底色、也塞不下第二行说明 —— 而「这个源是什么、开没开」恰恰要看
+          说明那一行。面板挂在 ContextMenuHost 上，贴边翻转 / 点别处关闭 / Esc 都是现成的。
+        */}
+        <SettingSelect
+          ariaLabel="筛选订阅源"
+          width={240}
+          style={{ flex: 'none' }}
           value={sourceUrl}
-          aria-label="筛选订阅源"
-          style={{ width: 240, flex: 'none' }}
-          onChange={(event) => {
-            setSourceUrl(event.target.value)
+          options={sourceOptions}
+          onChange={(next) => {
+            setSourceUrl(next)
             setPage(1)
             setReloadToken((token) => token + 1)
           }}
-        >
-          {/*
-            ★ 层次只有一层：**全部订阅源**是「下面这些的全集」，一条分隔线把它与子项隔开
-              （GitHub 发现与各条 URL 源同一层级 —— 别把其中一类单独划出去，那正是
-              「它俩不是一类东西」那个错觉的来源，见 SOURCE_SEPARATOR 的说明）。
-          */}
-          <option value="">全部订阅源</option>
-          {SOURCE_SEPARATOR}
-          {/*
-            ★ 这一格的值不是订阅源 URL —— 后端不认识它，`refreshRegistry` 也绝不能收到它；
-              选中之后这一页换由 useGithubDiscovery 供数。
-            ★ 它**固定存在**（「管理订阅源」里那张卡片不可删除），所以这里不带「有没有」的判断，
-              只跟 `enabled` 走：停用就打上标注、且不再参与「全部订阅源」的聚合搜索。
-              「已停用」这一格仍然可选 —— 停用是「不参与聚合」，不是「不许看」（与下面那些源一致）。
-          */}
-          <option value={GITHUB_DISCOVERY}>
-            {GITHUB_DISCOVERY_NAME}
-            {discoverySource.enabled ? '' : '（已停用）'}
-          </option>
-          {sources.map((source) => (
-            <option key={source.url} value={source.url}>
-              {source.name || source.url}
-              {/* 停用的源不在聚合结果里，但单独看它是允许的 —— 标出来才不会被当成「源没了」 */}
-              {source.enabled ? '' : '（已停用）'}
-            </option>
-          ))}
-        </select>
-        {discoveryMode ? (
-          <select
-            className="input"
-            value={sort}
-            aria-label="发现排序"
-            style={{ width: 132, flex: 'none' }}
-            onChange={(event) => setSort(event.target.value === 'stars' ? 'stars' : 'updated')}
-          >
-            <option value="updated">最近更新</option>
-            <option value="stars">最多 Stars</option>
-          </select>
-        ) : null}
+        />
       </div>
 
       {discoveryMode ? (
         <>
-          {/* 这一句是**免责**而不是说明：社区插件没过审核，格式校验也不等于安全审核 */}
-          <p className="field-hint" style={{ marginTop: 10 }}>
-            {
-              // 用字符串而不是裸文本：JSX 文本换行会变成一个空格，中文句子里看着像排错了
-              '自动发现 GitHub 社区插件，未经 Songloft 审核；格式校验不代表安全审核。安装前请自行确认源码与申请的权限。'
-            }
-            {!client || discovery.credentialLoading || discovery.token
-              ? ''
-              : ' 未配置 GitHub Token 时匿名访问每小时只有 60 次，一页发现就可能用光。'}
-          </p>
-
+          {/*
+            ★ 「GitHub 发现」不再有自己的排序下拉，也不再单独占一行免责提示：
+              它和别的源一样是「全部订阅源」的一份子，选中它只是**收窄范围**，
+              不该顺手把这一页的排版也换一套（换一套 = 每切一次源，视线上面的东西都挪一次）。
+              免责那句并进了副标题（见上面那个 ternary）。
+          */}
           {discovery.error && discovery.plugins.length > 0 ? (
             <div className="probe-result" data-state="error" style={{ marginTop: 10 }}>
               <IconAlert size={15} />
