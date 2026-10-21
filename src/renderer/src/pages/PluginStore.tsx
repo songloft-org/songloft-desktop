@@ -161,6 +161,8 @@ export function PluginStore(): React.JSX.Element {
    */
   const forceRef = useRef(false)
   const proxyRef = useRef('')
+  /** 上一次真正拿去请求的关键词（判断「是不是换了词」，刷新/换源不算） */
+  const keywordRef = useRef(keyword)
 
   // 输入防抖：每敲一个字都去戳一次远端（还要穿过 GitHub 代理）既慢又扰民
   useEffect(() => {
@@ -228,6 +230,19 @@ export function PluginStore(): React.JSX.Element {
     // 发现页不归后端那份聚合结果管：切过去时不能再发一次 registry/refresh
     if (!client || discoveryMode) return
     let cancelled = false
+    /*
+     * 换了关键词就把上一份结果收走。
+     *
+     * ★ 留着的话，请求在路上时屏幕上是「上一个词的卡片 + 尾部骨架」，而这两样合起来在用户
+     *   眼里就是「这次搜到的，还在加载」—— 正是「搜 A 却出来 B」那种误读。
+     * ★ 刷新与换源不清：那两种操作的列表本来就是同一份，清空只会白闪一下（连滚动位置都丢）。
+     */
+    if (keywordRef.current !== keyword) {
+      keywordRef.current = keyword
+      setEntries([])
+      setTotal(0)
+      setExhausted(false)
+    }
     setLoading(true)
 
     void (async () => {
@@ -518,6 +533,17 @@ export function PluginStore(): React.JSX.Element {
    */
   const githubMatches = discoveryMode ? [] : keyword ? discovery.plugins : []
 
+  /**
+   * 这一屏还有哪一半在路上。
+   *
+   * 两半来源同时出发（订阅源一次请求、GitHub 一次搜索），先到的那半先落位，后到的那半
+   * 由网格**尾部**的骨架卡占住位置 —— 这里就是「要不要摆那几张」的判据。续页也算：
+   * `loading` 覆盖首屏 / 搜索 / 刷新，`discovery.loadingMore` 是发现那半的续页。
+   */
+  const pendingMore = loading || (keyword !== '' && (discovery.loading || discovery.loadingMore))
+  /** 已经有卡片可画：这时骨架只在尾部补几张，而不是整块重摆 */
+  const hasCards = githubMatches.length > 0 || (!error && entries.length > 0)
+
   return (
     <div className="page">
       <div className="page-header">
@@ -708,18 +734,22 @@ export function PluginStore(): React.JSX.Element {
             />
           ) : null}
 
+          {/*
+            有卡片就画卡片，还在等就在**同一个网格的尾部**补一排骨架（首屏、搜索、续页
+            三种等待共用这一条路）；一张都没有时才摆整块骨架。转圈那一档在这里没有位置：
+            它与骨架说的是同一件事，却既没说清楚「长在哪儿」，也没说清楚「长多大」。
+          */}
           {discovery.plugins.length > 0 ? (
-            <ul className="store-grid">{discovery.plugins.map(renderDiscoveryCard)}</ul>
-          ) : null}
-
-          {!discovery.error && discovery.loading && discovery.plugins.length === 0 ? (
+            <ul className="store-grid">
+              {discovery.plugins.map(renderDiscoveryCard)}
+              {discovery.loading || discovery.loadingMore
+                ? Array.from({ length: SKELETON_TAIL }, (_, index) => (
+                    <StoreCardSkeleton key={`pending-${index}`} />
+                  ))
+                : null}
+            </ul>
+          ) : !discovery.error && (discovery.loading || discovery.loadingMore) ? (
             <StoreGridSkeleton />
-          ) : null}
-
-          {discovery.loadingMore ? (
-            <div className="empty" style={{ padding: '14px 0' }}>
-              <IconLoader size={18} />
-            </div>
           ) : null}
 
           {/*
@@ -800,20 +830,18 @@ export function PluginStore(): React.JSX.Element {
               剩下的空位就白扔了 —— GitHub 命中几个之后，订阅源的卡片会从新的一整行开始
               排，看上去像两份互不相干的结果。混排之后卡片一路铺满，来源的差别只体现在
               卡片自己的底行（仓库名 / 订阅源）与下面那句提示里。
-          */}
-          {keyword !== '' && discovery.loading && githubMatches.length === 0 ? (
-            <p className="field-hint" style={{ marginTop: 10 }}>
-              同时在搜索 GitHub 社区…
-            </p>
-          ) : null}
 
+            ★ 同一个道理，**等待也排在这个网格里**：先回来的那半先落位，还没回来的那半由
+              尾部几张骨架卡占着位置（见 SKELETON_TAIL）。另起一块骨架屏、或者摆一枚转圈
+              图标，都会让人以为「上面这些已经齐了，下面另开一节」。
+          */}
           {githubMatches.length > 0 ? (
             <p className="field-hint" style={{ marginTop: 14 }}>
               {`其中 ${githubMatches.length} 个来自 GitHub 社区（通过「GitHub 发现」找到，未经审核）。`}
             </p>
           ) : null}
 
-          {githubMatches.length > 0 || (!error && entries.length > 0) ? (
+          {hasCards ? (
             <ul className="store-grid">
               {githubMatches.map(renderDiscoveryCard)}
               {error
@@ -827,19 +855,17 @@ export function PluginStore(): React.JSX.Element {
                       onInstall={() => void install(entry)}
                     />
                   ))}
+              {/* 还有一半在路上：尾部补一排骨架。不另起一节、也不摆转圈 —— 三者说的是
+                  同一件事（「这儿还要长出卡片」），而只有骨架同时说清了长在哪儿、长多大 */}
+              {pendingMore
+                ? Array.from({ length: SKELETON_TAIL }, (_, index) => (
+                    <StoreCardSkeleton key={`pending-${index}`} />
+                  ))
+                : null}
             </ul>
-          ) : null}
-
-          {/* 头一页还在路上：摆与真实卡片同构的骨架屏（见 StoreGridSkeleton）。
-              转圈图标只说得清「在忙」，说不清「待会儿这儿会长出什么」——数据一回来卡片凭空冒出来，
-              视线得重新找一遍位置 */}
-          {!error && loading && entries.length === 0 ? <StoreGridSkeleton /> : null}
-
-          {/* 续页时只在列表底部放一枚转圈的指示，不摆骨架屏：骨架会把已有的行往下推 */}
-          {!error && loading && entries.length > 0 ? (
-            <div className="empty" style={{ padding: '14px 0' }}>
-              <IconLoader size={18} />
-            </div>
+          ) : pendingMore ? (
+            /* 一张都还没有：整块骨架（见 StoreGridSkeleton） */
+            <StoreGridSkeleton />
           ) : null}
 
           {/*
@@ -1026,6 +1052,15 @@ function StoreCard({ entry, pending, disabled, onInstall }: StoreCardProps): Rea
  * 12 这个数在常见的几档列数下都排得出整行（4×3 / 3×4 / 2×6），末行不会孤零零挂着一张。
  */
 const SKELETON_CARDS = 12
+
+/**
+ * 已经有卡片、只差一半没回来时，尾部补几张骨架。
+ *
+ * 比 SKELETON_CARDS 短得多，理由不同：整块骨架要顶住首屏（不能一回来就长出一大截），
+ * 而尾部这几张只是说「这边还在长」，**一排**就够。摆满一屏反而会让人觉得结果有那么多，
+ * 真回来时页面往回缩得厉害（常见的一列 3 张，宽屏 4 张，一排都能排得下）。
+ */
+const SKELETON_TAIL = 3
 
 /**
  * 商店卡片的骨架屏。
