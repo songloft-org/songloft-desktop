@@ -217,8 +217,12 @@ export function PlayerBar(): React.JSX.Element {
         </button>
 
         {/*
-          投送到音箱：**点击即切换**——没在投送时点它是「选设备」，正在投送时点它是取消。
-          （换设备要先取消再选：把两颗动作糅进一次点击，误触的代价是音箱突然换歌。）
+          投送到音箱：**无论投送与否，点它都只是打开那个框**（见 DlnaDialog —— 框里摆着
+          「本机播放」和每台设备，谁在当前出口带一枚标记，切换出口全在那儿点）。
+          不再按状态改行为：「取消投送」本身就是有副作用的（本机开始出声 / 音箱那边停掉），
+          不该藏在一颗随状态换语义的钮上；换设备也就不必先取消一次。
+          ★ 也因此**不再 `disabled={!song}`**：投送中清空队列会让 song 变 null，那一版会把
+          「切回本机」这条路一起关掉，声音留在音箱上再也拿不回来。
           它与左右邻居是同一类东西（都作用于「此刻这一首怎么放」），所以留在中间这一排、
           紧跟在「下一首」后面；右边的歌词 / 队列 / 迷你 / 音量属于「换个看法」，不混。
         */}
@@ -227,14 +231,10 @@ export function PlayerBar(): React.JSX.Element {
           className="icon-btn"
           data-active={dlnaCasting}
           data-tip={
-            dlnaCasting ? `正在投送到「${dlnaDeviceName}」，点击取消` : '投送到音箱（DLNA）'
+            dlnaCasting ? `正在投送到「${dlnaDeviceName}」，点击更换` : '投送到音箱（DLNA）'
           }
-          aria-label={dlnaCasting ? '取消投送' : '投送到音箱'}
-          disabled={!song}
-          onClick={() => {
-            if (dlnaCasting) void useDlna.getState().disconnect()
-            else useDlna.getState().openDialog()
-          }}
+          aria-label={dlnaCasting ? '更换投送设备' : '投送到音箱'}
+          onClick={() => useDlna.getState().openDialog()}
         >
           <IconCast size={ICON_MD} />
         </button>
