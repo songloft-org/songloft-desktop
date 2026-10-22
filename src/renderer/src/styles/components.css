@@ -109,11 +109,22 @@
   padding: 0;
 }
 
+/*
+ * ★★ `padding: 0` 是必需的，不是随手写的：按钮自带的 UA 内边距是 `1px 6px`，而
+ *   `box-sizing: border-box`（base.css 的全局那条）下它会**从固定宽高里扣掉** —— 22px 的钮
+ *   只剩 10px 内容宽，放不下 14px 的图标，于是网格项溢出。溢出的项在 Chromium 里不再居中，
+ *   而是退回**起始边对齐**：图标整个右移 2px（圆心还在原地，看起来就是「三角形偏右」）。
+ *   圆钮越小越显眼，迷你条那几颗正是最小的那一档；44px 以上的钮装得下，所以问题一直在
+ *   那儿没露头（.btn[data-size='icon'] 早先也踩过同一条，见上面那行的 padding: 0）。
+ *   清零之后内容盒 = 钮盒，`place-items: center` 才是真的「图标在两个方向都居中」，
+ *   与图标尺寸、窗口分辨率都无关 —— 不必靠任何 px 偏移去凑。
+ */
 .icon-btn {
   display: grid;
   place-items: center;
   width: 32px;
   height: 32px;
+  padding: 0;
   border: none;
   background: transparent;
   color: var(--text-2);
@@ -159,12 +170,15 @@
   color: #fff;
 }
 
-/* 主播放键：比普通圆钮更大、带主题光晕 */
+/* 主播放键：比普通圆钮更大、带主题光晕。
+   ★ padding: 0 的理由同上（.icon-btn 那一节）：不清掉 UA 的 `1px 6px`，窄到 22px 的迷你钮
+     就放不下图标，溢出的网格项退回起始边对齐 —— 三角形会偏右 2px。 */
 .play-btn {
   display: grid;
   place-items: center;
   width: 44px;
   height: 44px;
+  padding: 0;
   border: none;
   border-radius: 50%;
   background: var(--accent);
