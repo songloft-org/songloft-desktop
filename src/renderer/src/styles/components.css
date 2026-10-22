@@ -870,9 +870,12 @@
   color: var(--text-1);
 }
 
+/* 歌手名与右上角那行读数（.playerbar-time）**同一档颜色**（--text-2）：两处说的都是
+   「放在放什么 / 放到哪儿了」，本来就是一回事；原先这里是 --text-3（0.44 那一档），
+   与读数 0.94 差了三档，同一屏里像两个层级的东西。 */
 .playerbar-artist {
   font-size: 12px;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /*
@@ -918,12 +921,33 @@
   gap: 8px;
 }
 
+/*
+ * 底栏**右上角**那一小块读数（`1:23 / 4:05`）。
+ *
+ * 绝对定位，不进那三格的流：它是整条栏唯一的读数，不属于任何一组操作 ——
+ * 左格是「放的是哪一首」、中格是「怎么放」、右格是「换个看法」。挂在角上之后，
+ * 歌名再长、右格再加几颗钮，都挤不到它，它也挤不动别人。
+ *
+ *   · top: 8px —— 让开顶部那条 3px（hover / 拖动时 5px）的进度线；
+ *   · right: 22px —— 与底栏的横向 padding 对齐，正好与右格那几颗钮的右边缘齐平；
+ *   · 12px + line-height: 1 —— 只占 12px 高，落在右格那排钮（38px、垂直居中，
+ *     从栏顶 27px 起）上方那段空白里，两者碰不上；
+ *   · tabular-nums —— 数字等宽，读数每秒跳动时不会左右抖；
+ *   · pointer-events: none —— 它只是读数，别在底栏上多出一块能吃点击的区域；
+ *   · 颜色 --text-2、字号 12px —— 与歌手名（.playerbar-artist）**同一档**：两处
+ *     说的都是「在放什么 / 放到哪儿了」。比歌名（--text-1）浅一档，读数不该跟标题
+ *     抢主次；又比 --text-3 深一档，小字压在玻璃底上才读得清。
+ */
 .playerbar-time {
-  font-size: 11.5px;
+  position: absolute;
+  top: 8px;
+  right: 22px;
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
-  color: var(--text-4);
-  min-width: 42px;
-  text-align: center;
+  color: var(--text-2);
+  white-space: nowrap;
 }
 
 .volume-group {

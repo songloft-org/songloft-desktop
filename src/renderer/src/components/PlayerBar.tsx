@@ -89,6 +89,17 @@ export function PlayerBar(): React.JSX.Element {
         onSeekBy={(delta) => player.seekBy(delta)}
       />
 
+      {/*
+        播放时间固定在底栏**右上角**（绝对定位，见 components.css 的 .playerbar-time）。
+        之所以放在角上而不是塞进某一组里：它是这一整条唯一的**读数**，不属于任何一组
+        操作 —— 左格是「放的是哪一首」、中格是「怎么放」、右格是「换个看法」。
+        挂在角上之后，歌名再长、右格再多几颗钮，都挤不到它。
+        拖动进度条时这里跟着手上的位置走（position 就是 scrub ?? currentTime）。
+      */}
+      <span className="playerbar-time">
+        {formatDuration(position)} / {formatDuration(duration)}
+      </span>
+
       {/* 左侧：当前曲目 */}
       <div className="playerbar-now">
         {/*
@@ -106,6 +117,11 @@ export function PlayerBar(): React.JSX.Element {
           {/* 缺后端出图时退到原始音源封面（见 shared/metadata 的 songCoverUrl） */}
           <Cover coverUrl={songCoverUrl(song)} width={112} size={54} radius={10} kind="song" />
         </button>
+        {/*
+          这一格**不设 flex: 1**（只留 min-width: 0）：占满整格的话，右边那颗收藏钮
+          会被推到左格的最右端，离歌名隔着半条栏。这里要的是「名字读完了就挨着收藏钮」——
+          所以宽度交给内容，只有内容比格子长时才收缩（min-width: 0 让 truncate 生效）。
+        */}
         <div style={{ minWidth: 0 }}>
           {/* 标题兜底：元数据里没有标题时用文件名，再没有才说「未知歌曲」 */}
           <div className="playerbar-title truncate">{fallbackTitle(song)}</div>
@@ -185,10 +201,6 @@ export function PlayerBar(): React.JSX.Element {
         >
           <IconSkipForward size={ICON_LG} />
         </button>
-
-        <span className="playerbar-time">
-          {formatDuration(position)} / {formatDuration(duration)}
-        </span>
       </div>
 
       {/* 右侧：视图与音量 */}
