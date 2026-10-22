@@ -1839,6 +1839,11 @@ html[data-mini='true'] :focus-visible {
  * 立主次靠的不是尺寸：整条上只有它是实心圆、只有它是 accent 填充，这已经够了 ——
  * 而圆形钮的横向占位就是它的宽度，每小一档文字那头就松一分。
  * 图标同步缩小（播放 14 / 暂停 12，见 MiniPlayer.tsx）；不跟着缩的话圆里会显得塞得慌。
+ * ★ 图标在圆里怎么居中：这一颗是 grid + place-items: center（见上面 .play-btn 的全局那份），
+ *   而三角形 / 暂停条的**墨迹框本身就在 24 网格正中**（见 Icons.tsx 的 IconPlay）——
+ *   两下一合，22px 这个尺寸上它在两个方向上都精确居中。
+ *   所以这里**不要**再补 padding-left / translate 之类的偏移量去「凑」观感：那种数值是某一档
+ *   尺寸、某一档 DPI 下的经验值，圆钮一变大（比如满窗播放那 56px）就反过来偏了。
  */
 .mini-bar .play-btn {
   flex: none;
