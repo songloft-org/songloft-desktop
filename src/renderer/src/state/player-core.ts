@@ -99,6 +99,12 @@ export interface PlayerState {
   playSong: (song: Song, context?: PlaybackContext | null) => Promise<void>
   toggle: () => Promise<void>
   pause: () => void
+  /**
+   * 把**当前这一首**在本机重新载入到 `position`（`autoplay` 决定载入后是否立刻出声）。
+   *
+   * 「取消投送」用它接着上一路继续：队列、游标、播放模式一个字都不动 —— 它不是一次新的播放。
+   */
+  resumeLocal: (position: number, autoplay: boolean) => Promise<void>
   next: (auto?: boolean) => Promise<void>
   previous: () => Promise<void>
   seek: (seconds: number) => void
@@ -124,6 +130,93 @@ export interface PlayerState {
 
 const audio = new Audio()
 audio.preload = 'auto'
+
+/**
+ * 「投送」通道。
+ *
+ * ★ 为什么把投送接进播放核心，而不是在界面层分流：底栏、满窗播放、迷你窗、托盘、
+ *   媒体键读的都是这一个 store。投送时那一套控件要照常可用（暂停 / 下一首 / 进度），
+ *   唯一不同的是**声音从哪出**。所以这里只换「输出通道」，队列、游标、歌词、
+ *   播放模式全部照旧 —— 换歌还是走 step() → startSong()，只是最后一步由音箱来做。
+ *
+ * ★ 由 state/dlna.ts 在模块加载后注册，没投送时它是 null，走原来的本地播放路径。
+ *   反过来 player-core **不 import** 投送模块（投送要 import 它），这条依赖是单向的。
+ */
+export interface CastBridge {
+  /** 把这一首推给设备（失败由实现方报错并写 status/error） */
+  load(song: Song, ctx: PlaybackContext | null): Promise<void>
+  play(): void
+  pause(): void
+  seek(seconds: number): void
+  /** 可选：设备支持 RenderingControl 时，底栏那根音量滑条控的是设备音量（0~100） */
+  volume?(volume: number): void
+}
+
+/**
+ * 起播时的一些额外要求 —— 只有「本机 ↔ 投送」互切会用到（见 resumeLocal）。
+ */
+interface StartOptions {
+  /** 从第几秒开始（缺省 0）。切投送 / 取消投送时用它接上进度，别从头再来 */
+  startAt?: number
+  /**
+   * 载入后是否立刻出声（缺省 true）。
+   *
+   * 传 false = **暂停着载入**：把这一首摆到 `startAt` 处、让进度条与歌词都对，
+   * 但不调 play() —— 用在「切换前后本来就是暂停」的时候，状态要一致。
+   */
+  autoplay?: boolean
+  /**
+   * 是否把这一次算作「一次收听」（写播放历史 / 最近播放），缺省 true。
+   *
+   * 传 false = 这只是**同一个出口换了个人**（取消投送、声音回到本机），不该在历史里
+   * 又记一条 —— 那一首在投送开始时已经记过了。
+   */
+  account?: boolean
+}
+
+let castBridge: CastBridge | null = null
+
+/** 注册 / 注销投送通道（null = 回到本地播放）。由 state/dlna.ts 调用。 */
+export function setCastBridge(bridge: CastBridge | null): void {
+  castBridge = bridge
+}
+
+/**
+ * 本机 `<audio>` 上现在挂着哪一首（-1 = 什么都没挂）。
+ *
+ * ★ 投送期间 audio **不带 src**，但它上面可能还留着投送前那一首。取消投送后如果直接
+ *   `audio.play()`，响起来的是**那首旧歌**——所以取消投送时要调一次 unloadLocalAudio()，
+ *   而 toggle 在「本机还没载入这一首」时重新走一遍 startSong。
+ */
+let loadedSongId = -1
+
+/** 卸掉本机音频（取消投送时用）：之后再点播放会重新加载当前这一首。 */
+export function unloadLocalAudio(): void {
+  loadedSongId = -1
+  expectedSrc = ''
+  audio.removeAttribute('src')
+  audio.load()
+}
+
+/**
+ * 把本机这一路输出恢复到一份快照（音量 + 静音）。**取消投送时用。**
+ *
+ * ★ 为什么不能只改 store 里的 `volume`：投送期间有三处「本机那一份」被换掉/晾着，
+ *   少还原一处就会出现「滑条显示 60%、实际没声 / 一按播放又跳回去」：
+ *     · `audio` 元素本身（真正出声的那一个，它的 `muted` 这一位投送期间没人碰过，
+ *        仍然是投送前的值 —— 但 store 那边被投送写成了 false）；
+ *     · store（底栏、满窗播放、迷你条、托盘、媒体键读的都是它）；
+ *     · 设置（`startSong` 起播时按它给 `audio.volume` 赋值，见下面那条说明）。
+ * ★ 立刻落盘，不走 400ms 的合并写：紧接着的一次起播会读这个值，晚一步就会按旧值
+ *   赋给 `audio.volume`，听到的音量与滑条显示的当场不一致。
+ */
+export function restoreLocalOutput(snapshot: { volume: number; muted: boolean }): void {
+  const volume = Math.max(0, Math.min(1, snapshot.volume))
+  audio.volume = volume
+  audio.muted = snapshot.muted
+  playerCore.setState({ volume, muted: snapshot.muted })
+  scheduleVolumePersist(volume, true)
+}
 
 /* ─────────────────────── 歌词缓存 ─────────────────────── */
 
@@ -382,6 +475,31 @@ export const playerCore = create<PlayerState>((set, get) => {
    * ★ 出声（playing 事件）与失败（error 事件 / play() 被拒）都会把它撤掉，这里只是兜底，
    *   以及覆盖「请求一直挂着、什么都不发生」的那一种。
    */
+  /**
+   * 一次收听「记账」：上报播放历史 / 记进最近播放 / 给下一首预热。
+   *
+   * ★ 一次收听只记一次：首次失败、重试才出声时，成功的是第二次调用，账要记在这一次上；
+   *   反过来，能出声之后又重试（不该发生，但真发生了也别重复报）。
+   * ★ 只对**曲库里的歌**成立，两个条件缺一不可：有会话（没登录时后端不认识我们）、
+   *   id 为正（本地文件 id 是负的，拿负数去问后端只会 404；最近播放同理 ——
+   *   那个列表靠 id 反查曲库，放进去只会得到一行「已从曲库删除」）。
+   * ★ 投送路径也调它：投送是一次真实的收听，只是声音不从本机出。
+   */
+  function markPlayed(song: Song, ctx: PlaybackContext | null): void {
+    if (accountedSong === song.id) return
+    accountedSong = song.id
+    // 真的响了就说明这一轮不是「整条路都断了」，连续失败与换源次数都重新开始
+    consecutiveFailures = 0
+    currentAttempt = 0
+    const client = useAuth.getState().client
+    if (client && song.id > 0) {
+      void reportPlayed(client, song.id, { type: 'play', context: ctx }).catch(() => undefined)
+      rememberRecent(song.id)
+    }
+    // 这一首已经有出声的路了，才轮到「让下一首别再等」—— 失败/换源途中不预热，免得雪上加霜
+    prefetchUpcoming()
+  }
+
   function armSourceTimer(song: Song, attempt: number): void {
     clearSourceTimer()
     sourceTimer = window.setTimeout(
@@ -402,15 +520,64 @@ export const playerCore = create<PlayerState>((set, get) => {
    * `attempt` 是「这首歌正在试第几个音源」（0 = 首次）。报错或超时由 handlePlaybackFailure
    * 安排下一次尝试（退避后），切满仍不出声才跳到下一首。
    */
-  async function startSong(song: Song, ctx: PlaybackContext | null, attempt = 0): Promise<void> {
+  async function startSong(
+    song: Song,
+    ctx: PlaybackContext | null,
+    attempt = 0,
+    options: StartOptions = {}
+  ): Promise<void> {
+    /*
+     * ★ 投送模式：这一声不由本机的 <audio> 出，而是让局域网里的音箱自己去拉流。
+     *   队列、游标、歌词、播放模式一律照旧 —— 所以「下一首 / 上一首 / 播完自动推进」
+     *   一行都不用改，它们仍然走 step() → startSong()，只是最后这一步换了出口。
+     *
+     * 不设 audio.src 也不调 play()：投送期间本机应当彻底不出声，而换 src 会让
+     * Chromium 去拉一遍同一份音频（白占带宽，还可能与音箱抢后端转码名额）。
+     */
+    if (castBridge) {
+      clearSourceTimer()
+      cancelPendingSwitch()
+      requestedTrack = undefined
+      accountedSong = -1
+      set({
+        error: null,
+        status: null,
+        buffering: false,
+        context: ctx,
+        currentTime: 0,
+        duration: song.duration > 0 ? song.duration : 0,
+        lyrics: EMPTY_LYRIC,
+        lyricsLoading: true,
+        lyricFailed: false,
+        // 音轨切换要重新投送一次（设备拿的是另一条流的地址），底栏那颗选择器先收起来
+        tracks: [],
+        activeTrack: -1
+      })
+      void loadLyrics(song).then(({ parsed, failed }) => {
+        if (get().currentSong()?.id !== song.id) return
+        set({ lyrics: parsed, lyricsLoading: false, lyricFailed: failed })
+      })
+      await castBridge.load(song, ctx)
+      markPlayed(song, ctx)
+      return
+    }
+
     const settings = useSettings.getState().settings
+    /*
+     * 「接着上一路放」的两个参数（只有本机 ↔ 投送互切会传）：
+     *   startAt —— 从第几秒开始，别从头；
+     *   autoplay —— 载入后是否立刻出声；false 表示只把位置摆好（切换前本来就是暂停）。
+     */
+    const startAt = Math.max(0, options.startAt ?? 0)
+    const autoplay = options.autoplay !== false
     clearSourceTimer()
     // 真的开始新一次加载了：上一轮安排过的换源（如果有）作废
     cancelPendingSwitch()
     // 首次尝试 = 一次新的收听：上一首选的音轨、上一次的记账都在这时归位
     if (attempt === 0) {
       requestedTrack = undefined
-      accountedSong = -1
+      // 「换个出口继续」不算新的一次收听：不重置记账，历史里就不会为同一首再记一条
+      if (options.account !== false) accountedSong = -1
     }
     const url = buildSongUrl(song, resourceContext(), {
       quality: settings.quality,
@@ -435,6 +602,8 @@ export const playerCore = create<PlayerState>((set, get) => {
       status: loadingText(song, attempt),
       buffering: true,
       context: ctx,
+      // 位置先摆到要起播的那一处：底栏在「正在获取音源」那一两秒里也不该显示上一首的进度
+      currentTime: startAt,
       /*
        * 歌词与音轨只在首次尝试时清空：换源时把它们清掉，界面会先白一下再重新填回来
        * （歌词有缓存、音轨要再探一次），而这两样与「用哪个音源拉同一份音频」无关。
@@ -446,7 +615,31 @@ export const playerCore = create<PlayerState>((set, get) => {
     audio.src = url
     // 读回来的是 DOM 解析过的绝对地址 —— 与 error 事件里的 audio.src 才是同一口径
     expectedSrc = audio.src
-    audio.volume = settings.volume
+    loadedSongId = song.id
+    /*
+     * 用 **store 里那一份**音量，不是设置里那份：取消投送时 `restoreLocalOutput` 把本机
+     * 音量写回 store 并立刻落盘，但落盘是异步的 —— 用户取消后马上点播放，读设置会读到
+     * 上一个值，于是「滑条是一个数、声音是另一个数」。store 才是此刻的真值
+     * （启动时由 primeAudio 从设置里灌进来）。
+     */
+    audio.volume = get().volume
+    /*
+     * 「从第几秒开始」：此刻元数据还没到，但规范允许先设 currentTime —— 浏览器会把它记成
+     * 「起播位置」，等 metadata 到位再生效（Chromium 就是按这个实现的），不会抛错。
+     */
+    if (startAt > 0) audio.currentTime = startAt
+
+    if (!autoplay) {
+      /*
+       * 暂停着载入：不调 play()，也**不上超时表** —— 那张表的意思是「预算内没出声就算这个
+       * 音源不行」，而这里本来就不该出声（上了表会白扣一次尝试次数，还会自己换源）。
+       * 收尾那一套（记账 / 歌词 / 音轨）照做：用户看到的是「暂停在原位」，该有的信息都在。
+       */
+      clearSourceTimer()
+      set({ buffering: false, status: null, playing: false })
+      finishStart(song, ctx)
+      return
+    }
 
     // 预算内还没出声就算这个音源不行（见 sourceTimeoutFor）
     armSourceTimer(song, attempt)
@@ -489,33 +682,21 @@ export const playerCore = create<PlayerState>((set, get) => {
       return
     }
 
-    /*
-     * 播放成功后才记账 —— 且一次收听只记一次：首次失败、重试才出声时，成功的是第二次调用，
-     * 账要记在这一次上；反过来，能出声之后又重试（不该发生，但真发生了也别重复报）。
-     *
-     * ★ 「记账」这一整块只对**曲库里的歌**成立，两个条件缺一不可：
-     *   · 有会话（没登录时后端不认识我们，也没必要为此拦下播放）；
-     *   · id 为正（本地文件的 id 是负的，见 shared/local-file —— 拿负数去问后端只会 404）。
-     *   「最近播放」同理不算本地文件：那个列表是靠 id 反查曲库的，放进去只会得到一行
-     *   「已从曲库删除」。
-     */
+    // 这一首真的响了：记账 + 封面主色 + 歌词 + 音轨（见 finishStart）
+    finishStart(song, ctx)
+  }
+
+  /**
+   * 一首歌「已经就位」之后的收尾：记账、封面主色、歌词、音轨探测。
+   *
+   * ★ 为什么从 startSong 里拆出来：有两种「就位」——真的响了（`audio.play()` 成功），
+   *   以及**暂停着载入**（取消投送时接着上一路，见 resumeLocal）。后者不调 play()，
+   *   但歌词与音轨一样要有，否则用户切回本机看到的是「暂停 + 空歌词」，像是丢了东西。
+   */
+  function finishStart(song: Song, ctx: PlaybackContext | null): void {
+    const settings = useSettings.getState().settings
+    markPlayed(song, ctx)
     const client = useAuth.getState().client
-    if (accountedSong !== song.id) {
-      accountedSong = song.id
-      // 真出声了就说明这一轮不是「整条路都断了」，连续失败的计数重新开始
-      consecutiveFailures = 0
-      /*
-       * 换源的次数也归零：这一次收听已经有了能用的音源，之后再出问题（比如播到一半断了）
-       * 应当从「第 1 个音源」重新开始数，而不是接着上次切到第 3 个继续。
-       */
-      currentAttempt = 0
-      if (client && song.id > 0) {
-        void reportPlayed(client, song.id, { type: 'play', context: ctx }).catch(() => undefined)
-        rememberRecent(song.id)
-      }
-      // 这一首已经出声了，才轮到「让下一首别再等」—— 失败/换源途中不预热，免得雪上加霜
-      prefetchUpcoming()
-    }
 
     // 封面主色 → 整页强调色（本地文件没有封面可取，只有从曲库那边凑得出地址时才去取）
     if (settings.accentFromCover) {
@@ -808,6 +989,20 @@ export const playerCore = create<PlayerState>((set, get) => {
         return
       }
       /*
+       * 投送中：本机的 audio 一直是暂停的（投送根本不给它 src），所以这里不能看 audio.paused，
+       * 要看**设备**在不在放 —— 那件事由轮询写进 `playing`。暂停/继续都发给音箱。
+       */
+      if (castBridge) {
+        if (get().playing) {
+          castBridge.pause()
+          set({ playing: false })
+        } else {
+          castBridge.play()
+          set({ playing: true })
+        }
+        return
+      }
+      /*
        * 正在等换源：这一下「播放」交给那次换源，不要另起一次加载 —— 此刻 audio 上还挂着
        * 上一次失败的加载，play() 只会再报一次错，把「正在切换」的提示换成红字。
        */
@@ -815,6 +1010,16 @@ export const playerCore = create<PlayerState>((set, get) => {
       if (!audio.paused) {
         cancelPendingSwitch()
         audio.pause()
+        return
+      }
+      /*
+       * 本机还没载入这一首（刚取消投送、或者投送期间又切过歌）：先加载再放。
+       * 不这么写的话，audio 上挂的还是投送之前那一首，一点播放就响错歌。
+       */
+      const notLoaded = get().currentSong()
+      if (notLoaded && loadedSongId !== notLoaded.id) {
+        consecutiveFailures = 0
+        await startSong(notLoaded, get().context, 0)
         return
       }
       /*
@@ -835,15 +1040,40 @@ export const playerCore = create<PlayerState>((set, get) => {
 
     // 用户按下暂停 = 此刻不要自动放歌：退避中的那次换源一并作废（见 pause 事件的说明）
     pause: () => {
+      if (castBridge) {
+        castBridge.pause()
+        set({ playing: false })
+        return
+      }
       cancelPendingSwitch()
       audio.pause()
+    },
+
+    /*
+     * 「取消投送 → 声音回到本机」的那一步：把当前这一首在本机载到设备刚才的位置。
+     *
+     * ★ 不动 queue / order / cursor / playMode：这是**同一次收听换了个出口**，
+     *   不是一次新的播放 —— 动了队列，用户按「下一首」就会跳到别处去。
+     * ★ 连续失败的账清零：上一次失败是投送那边的事，不该让它一回来就判死这一首。
+     */
+    resumeLocal: async (position, autoplay) => {
+      const song = get().currentSong()
+      if (!song) return
+      consecutiveFailures = 0
+      // account: false —— 这一首在投送开始时已经记过一次，别在历史里再添一条
+      await startSong(song, get().context, 0, { startAt: position, autoplay, account: false })
     },
 
     next: async (auto = false) => step(1, auto),
 
     previous: async () => {
       // 播过 5 秒以上先回到开头，这是播放器的通用约定
-      if (audio.currentTime > 5) {
+      if (get().currentTime > 5) {
+        if (castBridge) {
+          castBridge.seek(0)
+          set({ currentTime: 0 })
+          return
+        }
         audio.currentTime = 0
         return
       }
@@ -851,13 +1081,21 @@ export const playerCore = create<PlayerState>((set, get) => {
     },
 
     seek: (seconds) => {
+      if (castBridge) {
+        // 投送时进度由设备那边走：设备不知道「我们在拖」，直接把绝对秒数发过去
+        const total = get().duration
+        const target = Math.max(0, total > 0 ? Math.min(seconds, total) : seconds)
+        castBridge.seek(target)
+        set({ currentTime: target })
+        return
+      }
       if (!Number.isFinite(audio.duration) || audio.duration <= 0) return
       audio.currentTime = Math.max(0, Math.min(seconds, audio.duration))
       set({ currentTime: audio.currentTime })
       updatePositionState()
     },
 
-    seekBy: (delta) => get().seek(audio.currentTime + delta),
+    seekBy: (delta) => get().seek(get().currentTime + delta),
 
     reloadLyrics: async () => {
       const song = get().currentSong()
@@ -900,7 +1138,18 @@ export const playerCore = create<PlayerState>((set, get) => {
       audio.volume = clamped
       audio.muted = false
       set({ volume: clamped, muted: false })
-      scheduleVolumePersist(clamped)
+      /*
+       * ★ 投送时落盘的是**设备音量**，不能当成用户的本机偏好存下来：取消投送之后
+       *   用户会发现自己的音量被音箱那个值顶掉了（取消时会还原，见 state/dlna）。
+       *   所以投送期间不落盘，本地偏好留到投送结束再写。
+       */
+      if (!castBridge) scheduleVolumePersist(clamped)
+      /*
+       * 投送时这一根滑条控的是**音箱的音量**：本机正静着，拖它却没反应会让人以为坏了。
+       * 满窗播放、迷你条、托盘、媒体键、键盘音量键也都会走到这里 —— 这是唯一的口子，
+       * 所以它们不必各自判断「现在是不是在投送」。
+       */
+      castBridge?.volume?.(Math.round(clamped * 100))
     },
 
     flushVolume: () => scheduleVolumePersist(get().volume, true),

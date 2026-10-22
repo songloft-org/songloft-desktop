@@ -296,6 +296,22 @@ export const IconRestore = (p: IconProps) => (
   </Svg>
 )
 
+/**
+ * 投送到音箱：一块屏幕 + 左下角三道信号弧。
+ *
+ * 这里只有一颗图标，靠 `data-active` 区分「正在投送」（见底栏那颗按钮）——
+ * 再画一颗 connected 变体只是多一个容易画歪的图形，说明不了更多事。
+ */
+export const IconCast = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M20.5 15.5V7a2 2 0 0 0-2-2h-13a2 2 0 0 0-2 2v1.6" />
+    <path d="M20.5 15.5a2 2 0 0 1-2 2h-6.9" />
+    <path d="M3.5 12.6a7.4 7.4 0 0 1 7.4 7.4" />
+    <path d="M3.5 16.6a3.4 3.4 0 0 1 3.4 3.4" />
+    <circle cx="3.9" cy="19.9" r="0.9" fill="currentColor" stroke="none" />
+  </Svg>
+)
+
 /** 迷你模式：大框里嵌一只小框（画中画那个意思）。与旁边的窗口控制图标刻意不同形 */
 export const IconMini = (p: IconProps) => (
   <Svg {...p}>

@@ -22,6 +22,7 @@ import type {
   WindowState
 } from './ipc'
 import type { StoredCredentials } from './bridge-types'
+import type { CastAction, CastRequest, DlnaDevice, DlnaStatus } from './dlna'
 import type { GithubDiscoveryRequest, GithubDiscoveryResult } from './github-discovery'
 
 export type { StoredCredentials }
@@ -94,6 +95,28 @@ export interface SongloftBridge {
     onRequest(handler: () => void): () => void
     /** 主窗口：收到一条遥控命令 */
     onCommand(handler: (command: MiniCommand) => void): () => void
+  }
+  /**
+   * 投送到局域网音箱（DLNA）。
+   *
+   * ★ 整段都在主进程：SSDP 组播与 SOAP 控制需要 UDP socket / 原生 HTTP，
+   *   渲染层做不了。也**没有后端参与** —— 音箱拉的是那条本来就有的播放地址。
+   *
+   * ★ 状态是主进程**推**过来的（`onState`），不是渲染层轮询：设备状态每 2 秒变一次，
+   *   渲染层再去问一遍只会多一层可能不一致的缓存。
+   */
+  cast: {
+    /** 搜索设备；`refresh` 忽略 60 秒缓存 */
+    devices(refresh?: boolean): Promise<DlnaDevice[]>
+    /** 推一首给设备并开始播放（`url` 由渲染层用 buildSongUrl 拼好，带 token 与转码参数） */
+    start(request: CastRequest): Promise<DlnaStatus>
+    control(action: CastAction, value?: number): Promise<DlnaStatus>
+    /** 读一次状态（渲染层刷新后接回主进程里可能还在跑的投送会话） */
+    status(): Promise<DlnaStatus>
+    /** 取消投送 */
+    stop(): Promise<void>
+    /** 投送状态变化（含「这一首播完了」这种一次性事件） */
+    onState(handler: (status: DlnaStatus) => void): () => void
   }
   tray: {
     update(snapshot: TraySnapshot): Promise<void>

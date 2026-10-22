@@ -12,6 +12,7 @@ import { useMemo, useState } from 'react'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
 import { useNowPlayingStatus } from '@/hooks/useNowPlayingStatus'
 import {
+  IconCast,
   IconHeart,
   IconLyrics,
   IconMini,
@@ -27,6 +28,7 @@ import { PlayerProgress } from './PlayerProgress'
 import { MODE_ICON, MODE_LABEL } from './play-mode'
 import { Cover, Slider } from './primitives'
 import { displayArtist, formatDuration } from '@/lib/format'
+import { useDlna } from '@/state/dlna'
 import { usePlayer } from '@/state/usePlayer'
 import { usePlaylists } from '@/state/usePlaylists'
 import { useUi } from '@/state/useUi'
@@ -51,6 +53,18 @@ export function PlayerBar(): React.JSX.Element {
   const { panelOpen, panelTab, togglePanel, miniOpen, setFullPlayer } = useUi()
   const favoriteIds = usePlaylists((s) => s.favoriteIds)
   const toggleFavorite = usePlaylists((s) => s.toggleFavorite)
+  /** 投送状态：底栏这颗按钮的高亮与「取消」语义都看它 */
+  const dlnaCasting = useDlna((s) => s.casting)
+  const dlnaDeviceName = useDlna((s) => s.activeDevice?.name ?? '音箱')
+  /*
+   * 投送期间的音量滑条 / 静音键控的是**音箱**的音量（DLNA RenderingControl）。
+   * 本机正静着，拖它却没反应会让人以为坏了；反过来，滑条位置也该显示音箱的真实音量，
+   * 不然「显示 70%、实际 19%」一拖就跳。
+   * volume < 0 = 这台设备没有 RenderingControl，那还是本机语义（并把提示说清楚）。
+   */
+  const dlnaVolume = useDlna((s) => s.status?.volume ?? -1)
+  const dlnaMuted = useDlna((s) => s.mutedOnDevice)
+  const volumeOnDevice = dlnaCasting && dlnaVolume >= 0
   /** 拖动进度条时手上的位置；null = 没在拖（见 PlayerProgress 的说明） */
   const [scrub, setScrub] = useState<number | null>(null)
 
@@ -201,6 +215,29 @@ export function PlayerBar(): React.JSX.Element {
         >
           <IconSkipForward size={ICON_LG} />
         </button>
+
+        {/*
+          投送到音箱：**点击即切换**——没在投送时点它是「选设备」，正在投送时点它是取消。
+          （换设备要先取消再选：把两颗动作糅进一次点击，误触的代价是音箱突然换歌。）
+          它与左右邻居是同一类东西（都作用于「此刻这一首怎么放」），所以留在中间这一排、
+          紧跟在「下一首」后面；右边的歌词 / 队列 / 迷你 / 音量属于「换个看法」，不混。
+        */}
+        <button
+          type="button"
+          className="icon-btn"
+          data-active={dlnaCasting}
+          data-tip={
+            dlnaCasting ? `正在投送到「${dlnaDeviceName}」，点击取消` : '投送到音箱（DLNA）'
+          }
+          aria-label={dlnaCasting ? '取消投送' : '投送到音箱'}
+          disabled={!song}
+          onClick={() => {
+            if (dlnaCasting) void useDlna.getState().disconnect()
+            else useDlna.getState().openDialog()
+          }}
+        >
+          <IconCast size={ICON_MD} />
+        </button>
       </div>
 
       {/* 右侧：视图与音量 */}
@@ -264,15 +301,41 @@ export function PlayerBar(): React.JSX.Element {
           <IconMini size={ICON_MD} />
         </button>
 
-        <div className="volume-group">
+        <div className="volume-group" data-disabled={dlnaCasting && dlnaVolume < 0}>
           <button
             type="button"
             className="icon-btn"
-            data-tip={player.muted ? '取消静音' : '静音'}
-            aria-label={player.muted ? '取消静音' : '静音'}
-            onClick={() => player.toggleMute()}
+            data-tip={
+              volumeOnDevice
+                ? dlnaMuted
+                  ? '取消音箱静音'
+                  : '音箱静音'
+                : player.muted
+                  ? '取消静音'
+                  : '静音'
+            }
+            aria-label={volumeOnDevice ? '音箱静音' : player.muted ? '取消静音' : '静音'}
+            onClick={() => {
+              if (volumeOnDevice) {
+                /*
+                 * 音箱是另一台设备，本机的 muted 对它无效 —— 只能把音量真的设到最小，
+                 * 再点一次还原（原值靠 lastVolume 记着，见 state/dlna 的说明）。
+                 * ★ 为什么看 dlnaMuted 而不是「音量是不是 0」：小爱会把这个 0 收到 1，
+                 *   只看回读值的话图标永远不变，用户会以为这个键没反应。
+                 */
+                useDlna.getState().toggleDeviceMute()
+                return
+              }
+              player.toggleMute()
+            }}
           >
-            {player.muted || player.volume === 0 ? (
+            {volumeOnDevice ? (
+              dlnaMuted ? (
+                <IconVolumeX size={ICON_MD} />
+              ) : (
+                <IconVolume level={dlnaVolume > 55 ? 2 : 1} size={ICON_MD} />
+              )
+            ) : player.muted || player.volume === 0 ? (
               <IconVolumeX size={ICON_MD} />
             ) : (
               <IconVolume level={player.volume > 0.55 ? 2 : 1} size={ICON_MD} />
@@ -280,6 +343,11 @@ export function PlayerBar(): React.JSX.Element {
           </button>
           <Slider
             ariaLabel="音量"
+            /*
+             * 投送时这一格读到的已经是**设备音量**（state/dlna 的 applyStatus 会把它写进
+             * player.volume），所以这里不必再分流 —— 满窗播放、迷你条、媒体键同理。
+             * 发往设备的那一路由 player-core.setVolume → CastBridge.volume 合并后发出。
+             */
             value={player.muted ? 0 : player.volume * 100}
             max={100}
             // 拖动期间只改内存（setVolume 内部会把落盘合并成一跳），
@@ -287,7 +355,8 @@ export function PlayerBar(): React.JSX.Element {
             onChange={(value) => player.setVolume(value / 100)}
             onCommit={(value) => {
               player.setVolume(value / 100)
-              player.flushVolume()
+              // 投送时不该把设备音量当成用户的本机偏好立刻落盘（见 player-core 的说明）
+              if (!volumeOnDevice) player.flushVolume()
             }}
           />
         </div>

@@ -26,6 +26,7 @@ import type {
   WindowState
 } from '@shared/ipc'
 import type { CoverBytes, SongloftBridge, StoredCredentials } from '@shared/bridge'
+import type { CastAction, CastRequest, DlnaDevice, DlnaStatus } from '@shared/dlna'
 import type { GithubDiscoveryRequest, GithubDiscoveryResult } from '@shared/github-discovery'
 
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -72,6 +73,17 @@ const bridge: SongloftBridge = {
     onState: (handler) => subscribe<MiniPlayerSnapshot>(IPC.onMiniState, handler),
     onRequest: (handler) => subscribe<void>(IPC.onMiniRequest, () => handler()),
     onCommand: (handler) => subscribe<MiniCommand>(IPC.onMiniCommand, handler)
+  },
+  cast: {
+    devices: (refresh) =>
+      ipcRenderer.invoke(IPC.castDevices, refresh ?? false) as Promise<DlnaDevice[]>,
+    start: (request: CastRequest) =>
+      ipcRenderer.invoke(IPC.castStart, request) as Promise<DlnaStatus>,
+    control: (action: CastAction, value) =>
+      ipcRenderer.invoke(IPC.castControl, action, value ?? 0) as Promise<DlnaStatus>,
+    status: () => ipcRenderer.invoke(IPC.castStatus) as Promise<DlnaStatus>,
+    stop: () => ipcRenderer.invoke(IPC.castStop) as Promise<void>,
+    onState: (handler) => subscribe<DlnaStatus>(IPC.onCastState, handler)
   },
   tray: {
     update: (snapshot: TraySnapshot) =>

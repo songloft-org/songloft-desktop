@@ -99,8 +99,26 @@ export const IPC = {
    */
   miniIsOpen: 'mini:is-open',
 
+  // ── 投送到局域网音箱（DLNA）────────────────────────────────────────────
+  /*
+   * ★ 这一组全在**主进程**：SSDP 要发 UDP 组播，渲染层是浏览器上下文开不了 socket。
+   *   服务端不参与（控制点在客户端，与上游 Flutter 版一致），所以这里没有对应的 HTTP 端点。
+   */
+  /** 搜一轮设备（缓存 60 秒） */
+  castDevices: 'cast:devices',
+  /** 把某一首推给设备并开始播放 */
+  castStart: 'cast:start',
+  /** 播放 / 暂停 / 停止 / 拖进度 / 音量 */
+  castControl: 'cast:control',
+  /** 读一次当前投送状态（应用启动时接回会话用） */
+  castStatus: 'cast:status',
+  /** 取消投送（让设备 Stop 并解绑） */
+  castStop: 'cast:stop',
+
   // ── 主进程 → 渲染层（单向推送）────────────────────────────────────────
   onMediaCommand: 'media:command',
+  /** 投送状态（进度 / 在不在放 / 播完了） */
+  onCastState: 'cast:state',
   onWindowState: 'window:state',
   onNavigate: 'app:navigate',
   /** 有本地文件等着被打开（推给主窗口：来取一下，见 localFilesTakePending） */

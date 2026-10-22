@@ -29,6 +29,7 @@ import { installAppMenu } from './app-menu'
 import { applyLocalCacheLimit, clearLocalCache, readLocalCache } from './cache'
 import { discoverGithubPlugins } from './github-discovery'
 import { checkClientUpdate } from './release'
+import { dlnaController } from './dlna'
 import { openTextFile, saveTextFile } from './files'
 import {
   announceLocalFiles,
@@ -54,6 +55,7 @@ import {
   showMiniWindow
 } from './mini-window'
 import { fetchCoverBytes, probeServer } from './probe'
+import type { CastAction, CastRequest } from '@shared/dlna'
 import { LOCAL_FILE_SCHEME } from '@shared/local-file'
 import { PLUGIN_PARTITION } from '@shared/plugin'
 import { PORTABLE_MARKER_FILE, chooseUserDataDir, portableDataDir } from '@shared/user-data'
@@ -599,6 +601,19 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC.miniCommand, (_event, command: MiniCommand) => {
     sendToRenderer(IPC.onMiniCommand, command)
   })
+
+  /*
+   * 投送到局域网音箱（DLNA）。整组都在主进程：SSDP 要 UDP 组播，渲染层开不了 socket。
+   * 状态由 dlnaController 推回渲染层（下面 onUpdate 那一句），渲染层不再自己轮询。
+   */
+  ipcMain.handle(IPC.castDevices, (_event, refresh: boolean) => dlnaController.discover(refresh))
+  ipcMain.handle(IPC.castStart, (_event, request: CastRequest) => dlnaController.cast(request))
+  ipcMain.handle(IPC.castControl, (_event, action: CastAction, value: number) =>
+    dlnaController.control(action, value)
+  )
+  ipcMain.handle(IPC.castStatus, () => dlnaController.status())
+  ipcMain.handle(IPC.castStop, () => dlnaController.stop())
+  dlnaController.onUpdate((status) => sendToRenderer(IPC.onCastState, status))
 
   // 托盘 / 系统
   ipcMain.handle(IPC.trayUpdate, (_event, snapshot: TraySnapshot) => {

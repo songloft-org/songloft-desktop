@@ -76,6 +76,8 @@ export const remotePlayer = create<PlayerState>((set, get) => ({
 
   toggle: async () => send({ kind: 'toggle' }),
   pause: () => send({ kind: 'pause' }),
+  /* 「取消投送后接着上一路继续」只有主窗口那条路会走（投送状态只在那里），迷你窗里没有 */
+  resumeLocal: async () => unsupported('resumeLocal'),
   next: async (auto = false) => send({ kind: 'next', auto }),
   previous: async () => send({ kind: 'previous' }),
   seek: (seconds) => send({ kind: 'seek', seconds }),

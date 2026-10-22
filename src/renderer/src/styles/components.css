@@ -966,6 +966,16 @@
   width: 118px;
 }
 
+/* 投送中但设备没有 RenderingControl：音量滑条在本机拖不出任何声音，
+   与其让人反复拖、以为坏了，不如直接置灰（按钮仍可点，会给出提示）。 */
+.volume-group[data-disabled='true'] {
+  opacity: 0.45;
+}
+
+.volume-group[data-disabled='true'] .slider {
+  pointer-events: none;
+}
+
 /* ── 满窗播放（见 components/FullPlayer.tsx）─────────────────────────────
    原生面上的一个浮层：底栏那颗封面点一下进来，收起钮 / Esc 出去。
 
@@ -2967,6 +2977,39 @@ select.input option[data-separator] {
   justify-content: flex-end;
   gap: 9px;
   padding: 16px 20px 20px;
+}
+
+/*
+ * 「投送到音箱」对话框的正文：**整块定高**，让里面自己分配、自己滚。
+ *
+ * 为什么必须定高：这块的内容会随「搜到没搜到 / 有没有在投送 / 有没有报错」变三四次，
+ * 而 .modal 是随内容长高的 —— 不定高的话，「正在搜索局域网…」跳成两台设备时对话框
+ * 当场缩一截，底下的「重新搜索」跟着往上跑，指针底下正好换了个东西（移动到一半
+ * 点到别处去）。定高之后变化全部发生在内部：多一行就少一截列表，对话框本身不动。
+ *
+ * 320px ≈ 六行设备（每行 52px），空态（图标 + 标题 + 一段说明）也装得下。
+ * 有「正在搜索 / 错误 / 当前设备」的额外一行时，从列表里扣，扣到装不下就滚动。
+ */
+.dlna-body {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  height: 320px;
+}
+
+/* 设备列表：吃掉 dlna-body 里剩下的高度，超出就自己滚（不是把对话框撑高）。 */
+.dlna-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -6px;
+}
+
+/* 空态在这块固定高的区域里垂直居中，并把 .empty 自带的 70px 上下留白收小 ——
+   那是给整页空态用的，塞进 320px 的框里会把内容顶出去、还多出一条没用的滚动条。 */
+.dlna-list .empty {
+  min-height: 100%;
+  padding: 20px;
 }
 
 /* 右键菜单 */

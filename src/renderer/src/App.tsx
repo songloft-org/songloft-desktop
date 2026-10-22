@@ -30,6 +30,7 @@ import { useEffect, useRef, useState } from 'react'
 import { isNewerVersion } from '@shared/version'
 import { checkServerUpgrade, getGithubProxy } from './api/endpoints'
 import { AddToPlaylistDialog } from './components/AddToPlaylistDialog'
+import { DlnaDialog } from './components/DlnaDialog'
 import { CommandPalette } from './components/CommandPalette'
 import { ContextMenuHost } from './components/ContextMenu'
 import { ExtensionFrame } from './components/ExtensionFrame'
@@ -64,6 +65,7 @@ import {
   usePlayer
 } from './state/usePlayer'
 import { requireClient, useAuth } from './state/useAuth'
+import { subscribeCastState, useDlna } from './state/dlna'
 import { useLibrary } from './state/useLibrary'
 import { usePlaylists } from './state/usePlaylists'
 import { usePlugins } from './state/usePlugins'
@@ -174,6 +176,12 @@ export function App(): React.JSX.Element {
      * 启动编排里就会漏掉「dev 里 HMR 重新挂载」那一轮 —— 取走是幂等的，重装无害。
      */
     const disposeLocalFiles = installLocalFileIntake()
+    /*
+     * 投送状态（主进程轮询设备得到的那一份）。与上面两条同一处装：它也要能接上
+     * 「dev 里 HMR 重新挂载」那一轮 —— 主进程里的投送会话是常驻的，
+     * 重新挂载后不重新订阅的话，底栏会以为没在投送（设备其实还在放）。
+     */
+    const disposeCast = subscribeCastState()
     const disposeOpen = window.songloft.mini.onOpen((open) => useUi.getState().setMiniOpen(open))
     const disposeState = window.songloft.on.windowState((state) => {
       const root = document.documentElement
@@ -183,6 +191,7 @@ export function App(): React.JSX.Element {
     return () => {
       disposeHost()
       disposeLocalFiles()
+      disposeCast()
       disposeOpen()
       disposeState()
     }
@@ -222,6 +231,12 @@ export function App(): React.JSX.Element {
         void usePlaylists.getState().load()
         void usePlaylists.getState().loadFavorites()
         void usePlayer.getState().restoreLastQueue()
+        /*
+         * 接回后端可能还开着的投送会话（渲染层刷新 / 重开窗口都会走到这里）：
+         * 会话在后端是常驻的，设备这会儿可能还在放 —— 不接回来界面就会以为没在投送。
+         * 拿不到（没投送 / 后端旧版本）时它自己安静退出，不打扰任何人。
+         */
+        void useDlna.getState().sync()
         // 查不到、没新版本都不出声（见函数注释）
         void checkUpdatesInBackground().catch(() => undefined)
       } else {
@@ -543,6 +558,7 @@ function Shell(): React.JSX.Element {
 
       <CommandPalette />
       <AddToPlaylistDialog />
+      <DlnaDialog />
       <ContextMenuHost />
       <TooltipHost />
       <Toasts />
