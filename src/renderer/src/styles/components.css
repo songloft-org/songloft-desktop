@@ -149,6 +149,15 @@
   color: var(--accent);
 }
 
+/* 「已开启」的图标钮（正在投送 / 歌词面板开着 / 已收藏 …）在悬浮时**保持** accent 色。
+   hover 那条基础规则的特异性（.icon-btn:hover:not(:disabled)）比上面这条高，不写的话
+   指针一移上去图标就从主题色变回普通文字色 —— 看着像「这个开关被关掉了」，
+   而鼠标只是路过。悬浮的反馈交给底色那条（background: --surface-2）就够了。
+   （与下面 danger 变体同一个理由，写法也一致。） */
+.icon-btn[data-active='true']:hover:not(:disabled) {
+  color: var(--accent);
+}
+
 /* 危险动作的图标钮（删除）：图标本身走 --danger —— 与 .btn 的 danger 变体、上下文菜单里
    那条 danger 项同一个口径，让「这一下不可逆」在按下之前就看得出来。
    底色只在悬浮时才泛红：这类钮常横排成一组，常驻一块红会把整页喊满。
