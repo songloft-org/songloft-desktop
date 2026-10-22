@@ -213,8 +213,19 @@ export function DlnaDialog(): React.JSX.Element | null {
                     <IconCast size={20} />
                   </span>
                   <div style={{ minWidth: 0, flex: 1, textAlign: 'left' }}>
-                    <div className="truncate" style={{ fontSize: 13.5 }}>
-                      {device.name}
+                    <div className="row" style={{ gap: 6, minWidth: 0 }}>
+                      <div className="truncate" style={{ fontSize: 13.5 }}>
+                        {device.name}
+                      </div>
+                      {/*
+                        协议标识。这些行眼下全是 DLNA 渲染器，但设备行本身不说明它是怎么连上的 ——
+                        一枚小标识把「这是音箱、走的是 DLNA」说清楚，也给将来别的投送协议
+                        （AirPlay / Chromecast）留出位置：那时按设备来源换字样即可。
+                        跟在名字后面而不是塞进副标题：当前出口那一行的副标题被状态文案占着。
+                      */}
+                      <span className="badge" style={{ flex: 'none' }}>
+                        DLNA
+                      </span>
                     </div>
                     <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{subtitle}</div>
                   </div>
