@@ -21,6 +21,7 @@ import {
   escapeXml,
   findService,
   formatSecondsToHms,
+  isBackendLocalFile,
   isVirtualInterface,
   MEDIA_RENDERER_ST,
   mimeForFormat,
@@ -28,6 +29,7 @@ import {
   parseSoapValue,
   parseSsdpResponse,
   parseTimeToSeconds,
+  prefetchUrl,
   rewriteToLan,
   SSDP_ADDRESS,
   SSDP_PORT,
@@ -57,6 +59,15 @@ const POLL_INTERVAL_MS = 2_000
 const VOLUME_DENSE_ROUNDS = 10
 /** 之后每这么多轮读一次：音量不是每两秒都会变的东西，读太勤等于白给设备添活 */
 const VOLUME_EVERY_ROUNDS = 5
+/**
+ * 投送前等「这一首变成后端本地文件」的上限。
+ *
+ * ★ 等不到就不等了、按原地址投出去（可能断续，但总比卡着不动强）：一首要转码的歌在弱机器上
+ *   要十几到几十秒。等过的那段不会白费 —— 后端那边的下载/转码还在后台跑，下一次投送直接命中。
+ */
+const PREPARE_TIMEOUT_MS = 60_000
+/** 「缓存还没就绪」这句提示在底栏留多久 */
+const NOTICE_TTL_MS = 15_000
 
 interface Session {
   device: DlnaDevice
@@ -95,6 +106,11 @@ interface Session {
   duration: number
   volume: number
   error: string
+  /** 正在把它变成后端本地文件（下载 / 转码落盘），还没交给设备 */
+  preparing: boolean
+  /** 给底栏看的一句普通提示；`noticeUntil` 到点自己清掉 */
+  notice: string
+  noticeUntil: number
 }
 
 type Listener = (status: DlnaStatus) => void
@@ -345,9 +361,30 @@ export class DlnaController {
       position: 0,
       duration: 0,
       volume: -1,
-      error: ''
+      error: '',
+      /*
+       * ★ 先把「准备中」亮起来：等本地文件这一段最长 60 秒，界面不能一片空白。
+       *   置回 false 的地方只有一处（下面 loadTransport 之后）—— 那时设备真的开始装了。
+       */
+      preparing: true,
+      notice: '',
+      noticeUntil: 0
     }
     this.session = session
+    this.emit()
+
+    /*
+     * ★ 先让这一首变成**后端本地文件**，再把地址交给设备。
+     *   交给设备的若还是「边转边发」的流，设备拿不到总长、缓冲策略又普遍很差 ——
+     *   投送一首歌听到一半断断续续，根子就在这里。
+     */
+    await this.prepareLocalFile(session, request.url, request.live === true)
+
+    /*
+     * ★ 这一段可能已经被取消（用户点「本机播放」走 clearSession），或者另一首歌接管了。
+     *   那种情况下这个会话已经不存在，别再往设备上推东西。
+     */
+    if (this.session !== session) return this.snapshot()
 
     /*
      * 从渲染层过来的位置开始（「本机 → 投送」互切时接上进度）；缺省 0 = 从头。
@@ -374,10 +411,80 @@ export class DlnaController {
       session.playing = false
     }
 
+    session.preparing = false
     this.startPolling()
     void this.readVolume()
     this.emit()
     return this.snapshot()
+  }
+
+  /**
+   * 把这一首变成**后端本地文件**（下载 / 转码落盘），再让调用方去投送。
+   *
+   * ★ 为什么值得等：投送时音频不经过本应用，是设备自己 HTTP 拉那条播放地址。地址背后若还是
+   *   「边转边发 / 边下边发」的流，设备拿不到总长（小爱实测把这种流当成无限流）—— 表现就是
+   *   放到一半断断续续、或者播完不进下一首。落盘之后同一个地址改走 `http.ServeFile`：
+   *   有长度、可 Range，设备怎么拉都稳。
+   *
+   * ★ 两步走：
+   *   1. `?prefetch=1` 让后端**开始**落盘（立即回 202，不阻塞）；
+   *   2. 一个 `HEAD` 等它落完 —— 后端对 HEAD 刻意绕开「边转边发」那条路：需要转码时它会等
+   *      整首转完才回，正好就是我们等的那个信号；已经落盘时它立刻回。
+   *
+   * ★ `HEAD` 刻意**不设超时、不 abort**：请求断开会顺着 `r.Context()` 把后端正在跑的那条转码
+   *   一起 cancel 掉，于是「等不到就直投」反而把缓存毁了。所以用 `Promise.race` 放弃等待，
+   *   让那个请求自己跑完。
+   */
+  private async prepareLocalFile(session: Session, source: string, live: boolean): Promise<void> {
+    // 直播流没有「整首落盘」这回事（后端也会忽略 prefetch），干等只会白转 60 秒
+    if (!source || live) return
+
+    /*
+     * 让后端开始落盘。失败就算了 —— 这一步只是「早点开始」，真正决定成败的是下面的 HEAD。
+     * 响应体必须收掉，不然这条连接一直占着。
+     */
+    void fetch(prefetchUrl(source))
+      .then(async (response) => {
+        await response.body?.cancel()
+      })
+      .catch(() => undefined)
+
+    const startedAt = Date.now()
+    const ready = await Promise.race([
+      this.probeLocalFile(source),
+      delay(PREPARE_TIMEOUT_MS).then(() => false)
+    ])
+    const waited = Math.round((Date.now() - startedAt) / 1000)
+
+    // 期间被取消/换歌：不给这个已经不存在的会话写提示
+    if (this.session !== session) return
+
+    if (ready) {
+      console.info(`[dlna] 本地文件已就绪（等 ${waited}s），交给设备`)
+      return
+    }
+    console.warn(`[dlna] ${waited}s 内没等到本地文件，按原地址投送（这一首可能断续）`)
+    session.notice = '缓存还没就绪，这一首可能断续'
+    session.noticeUntil = Date.now() + NOTICE_TTL_MS
+  }
+
+  /**
+   * 问一次「这一首是不是已经是后端本地文件」，是就返回 true。
+   *
+   * ★ 判据见 `isBackendLocalFile`：完整文件走 `http.ServeFile`，一定带 `Content-Length`
+   *   与 `Accept-Ranges: bytes`；边转边发那条流给不出确定长度。
+   * ★ 请求**挂住**就说明后端还在转码/下载（HEAD 会等它干完），这时不放弃，交给外层的
+   *   60 秒上限收口 —— 重发只会让后端多起一份活。
+   */
+  private async probeLocalFile(source: string): Promise<boolean> {
+    try {
+      const response = await fetch(source, { method: 'HEAD' })
+      await response.body?.cancel()
+      return response.ok && isBackendLocalFile(response.headers)
+    } catch {
+      // 连不上 / 后端 4xx：当作「还没就绪」，让调用方按超时或原地址继续
+      return false
+    }
   }
 
   async control(action: CastAction, value = 0): Promise<DlnaStatus> {
@@ -746,6 +853,8 @@ export class DlnaController {
       }
 
       session.error = ''
+      // 「缓存没就绪」这类提示是临时的：到点自己走，别永远挂在底栏上
+      if (session.notice && Date.now() > session.noticeUntil) session.notice = ''
       this.pollCount += 1
       /*
        * 音量**不能每轮都读**：投送刚开始的那一次读不到（设备正忙着 TRANSITIONING，实测小爱会拒绝），
@@ -826,6 +935,8 @@ export class DlnaController {
       duration: session.duration,
       volume: session.volume,
       completed: session.completed,
+      ...(session.preparing ? { preparing: true } : {}),
+      ...(session.notice ? { notice: session.notice } : {}),
       ...(session.error ? { error: session.error } : {})
     }
   }

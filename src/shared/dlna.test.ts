@@ -7,12 +7,14 @@ import {
   escapeXml,
   findService,
   formatSecondsToHms,
+  isBackendLocalFile,
   isVirtualInterface,
   mimeForFormat,
   parseDescription,
   parseSoapValue,
   parseSsdpResponse,
   parseTimeToSeconds,
+  prefetchUrl,
   rewriteToLan
 } from './dlna'
 
@@ -209,5 +211,45 @@ describe('parseSoapValue', () => {
     const xml = '<CurrentTransportState>PLAYING</CurrentTransportState>'
     expect(parseSoapValue(xml, 'CurrentTransportState')).toBe('PLAYING')
     expect(parseSoapValue(xml, 'RelTime')).toBe('')
+  })
+})
+
+describe('prefetchUrl', () => {
+  it('接在已有查询参数后面（后端缓存键要求与真实播放完全一致）', () => {
+    expect(prefetchUrl('/songs/1/play?access_token=t&format=mp3')).toBe(
+      '/songs/1/play?access_token=t&format=mp3&prefetch=1'
+    )
+  })
+
+  it('没有查询参数时自己补一个问号', () => {
+    expect(prefetchUrl('http://host/songs/1/play')).toBe('http://host/songs/1/play?prefetch=1')
+  })
+
+  it('空地址返回空（没有可预热的对象）', () => {
+    expect(prefetchUrl('')).toBe('')
+  })
+})
+
+describe('isBackendLocalFile', () => {
+  const headers = (pairs: Record<string, string>) => ({
+    get: (name: string) => pairs[name.toLowerCase()] ?? null
+  })
+
+  it('ServeFile 的响应：有长度、可 Range → 是本地文件', () => {
+    expect(
+      isBackendLocalFile(headers({ 'content-length': '8123456', 'accept-ranges': 'bytes' }))
+    ).toBe(true)
+  })
+
+  it('边转边发那条流给不出确定长度 → 不算', () => {
+    expect(isBackendLocalFile(headers({ 'accept-ranges': 'bytes' }))).toBe(false)
+    expect(isBackendLocalFile(headers({ 'content-length': '0', 'accept-ranges': 'bytes' }))).toBe(
+      false
+    )
+  })
+
+  it('不能 Range（直播流 / 代理流）→ 不算', () => {
+    expect(isBackendLocalFile(headers({ 'content-length': '8123456' }))).toBe(false)
+    expect(isBackendLocalFile(headers({}))).toBe(false)
   })
 })

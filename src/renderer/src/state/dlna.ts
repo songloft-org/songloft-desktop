@@ -115,6 +115,15 @@ function describe(error: unknown): string {
  */
 function applyStatus(status: DlnaStatus): void {
   const player = playerCore.getState()
+  /*
+   * ★ 「正在准备本地缓存」发生在投送真正开始**之前**：这一首还在后端下载/转码。
+   *   此刻设备那边什么都没有（位置 / 时长 / 音量全是空的），照旧往下写就是把底栏按成
+   *   「暂停、0:00」—— 只换那一行文案，其余一个字都不动。
+   */
+  if (status.preparing) {
+    playerCore.setState({ buffering: true, status: '正在准备本地缓存…' })
+    return
+  }
   playerCore.setState({
     playing: status.playing,
     currentTime: status.position,
@@ -122,7 +131,8 @@ function applyStatus(status: DlnaStatus): void {
     duration: status.duration > 0 ? status.duration : player.duration,
     // 进度是设备来的，别再把「缓冲中…」挂在底栏上
     buffering: false,
-    status: null
+    // 「缓存还没就绪」这类提示走底栏那一行普通文案，不是错误
+    status: status.notice ?? null
   })
 
   // 记下设备上一次「有声」的音量：底栏那颗静音键靠它还原（见 DlnaState.lastVolume）
@@ -516,7 +526,9 @@ export const useDlna = create<
         format: song.format,
         // 从本机那一刻的进度接着放（缺省 0），并且沿用本机「在放 / 暂停」的状态
         position: Math.max(0, options?.position ?? 0),
-        autoplay: options?.autoplay !== false
+        autoplay: options?.autoplay !== false,
+        // 电台是直播流：没有「整首落盘」这回事，别让投送去等那 60 秒
+        live: song.type === 'radio'
       })
       /*
        * ★ 这一趟在飞的时候用户可能**已经取消了投送**（或者改投了另一台设备）。此刻再把这些

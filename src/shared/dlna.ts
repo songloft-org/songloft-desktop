@@ -59,6 +59,19 @@ export interface DlnaStatus {
    *   所以判定还有「位置走到末尾」这一条兜底，见 main/dlna.ts 的 poll()。
    */
   completed: boolean
+  /**
+   * 正在把这一首**变成后端本地文件**（下载 / 转码落盘），还没交给设备。
+   *
+   * ★ 这一段设备那边什么都没有（`position` / `duration` / `volume` 都还是空的），
+   *   界面不能拿它去覆盖播放器状态，只该把底栏那一行换成「正在准备本地缓存…」。
+   */
+  preparing?: boolean
+  /**
+   * 一句给底栏看的**普通**提示（不是错误），过一会儿自己消失。
+   *
+   * 目前只有一种：等不到本地文件、按原地址硬投了，这一首可能断续。
+   */
+  notice?: string
   error?: string
 }
 
@@ -93,6 +106,13 @@ export interface CastRequest {
    * 不因「切到投送」而改变。
    */
   autoplay?: boolean
+  /**
+   * 这是**直播流**（电台），没有「整首落盘」这回事。
+   *
+   * ★ 用来跳过投送前那段「等本地文件」：电台永远等不到（后端对它可以忽略 prefetch，
+   *   而播放地址背后是 m3u8 / 裸流），干等只会让用户白看 60 秒转圈。
+   */
+  live?: boolean
 }
 
 /* ───────────────────────────── SSDP 发现 ───────────────────────────── */
@@ -369,4 +389,36 @@ export function rewriteToLan(url: string, lanIp: string | null): string {
   } catch {
     return url
   }
+}
+
+/**
+ * 「请后端把这一首落到本地」的地址：在同一条播放地址上加 `prefetch=1`（后端立即回 202）。
+ *
+ * ★ 必须加在**投送真正会用的那条地址**上：后端按「插件 + 源 + 格式 + 码率 + 均衡」算缓存键，
+ *   预热与真实播放差一项，预热出来的就是一份谁也命中不了的产物。
+ * ★ 也正因为这一条，投送前要先有渲染层拼好的那份 URL，主进程不自己拼。
+ */
+export function prefetchUrl(url: string): string {
+  if (!url) return ''
+  return `${url}${url.includes('?') ? '&' : '?'}prefetch=1`
+}
+
+/** 只取响应头的一个最小接口 —— 不引入 DOM 的 Headers 类型，`shared/` 里保持纯 */
+export interface ResponseHeadersLike {
+  get(name: string): string | null
+}
+
+/**
+ * 这个响应是不是**后端本地文件**（而不是边转边发 / 边下边发的那条流）。
+ *
+ * ★ 为什么判据成立：落盘的文件交给 `http.ServeFile`，一定带 `Content-Length` 与
+ *   `Accept-Ranges: bytes`；实时转码那条流给不出确定长度（`Content-Length` 是按 CBR 估算的、
+ *   还挂着 `Cache-Control: no-store`），边下边发那条更是拿不到总长。
+ * ★ 为什么这件事要紧：设备拿不到总长的流，缓冲策略普遍很差 —— 投送一首歌听到一半断断续续、
+ *   或者播完不进入下一首，都是这么来的（见 AGENTS.md §8.20 的实测记录）。
+ */
+export function isBackendLocalFile(headers: ResponseHeadersLike): boolean {
+  const length = Number.parseInt(headers.get('content-length') ?? '', 10)
+  const ranges = (headers.get('accept-ranges') ?? '').toLowerCase()
+  return Number.isFinite(length) && length > 0 && ranges === 'bytes'
 }
