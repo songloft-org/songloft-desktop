@@ -18,7 +18,7 @@ import type { ClientUpdateCheck, ClientUpdateProxies } from '@shared/ipc'
 import { REPO_SLUG } from '@shared/links'
 import { pickUpdateAsset, type ClientUpdateAsset } from '@shared/update'
 
-import { getStream, readText, routeLabel, routesFor, type NetRoute } from './net-path'
+import { getStream, noteProxyFallback, readText, routesFor, type NetRoute } from './net-path'
 import { planProxies } from './proxy'
 
 /** 查一次的上限。连不上 GitHub 时默认要等很久，界面会一直停在「正在检查」 */
@@ -108,6 +108,10 @@ export async function checkClientUpdate(
   proxies: ClientUpdateProxies = { githubProxy: '', httpProxy: '' }
 ): Promise<ClientUpdateCheck> {
   const plan = await planProxies(proxies)
+  if (plan.httpProxyUnreachable) {
+    noteProxyFallback('服务端配的 HTTP 代理在本机连不上（TCP 探活失败）')
+  }
+
   const routes = routesFor(plan)
 
   let lastError: unknown = null
@@ -123,12 +127,12 @@ export async function checkClientUpdate(
           platform: process.platform,
           arch: process.arch,
           appImage: Boolean(process.env.APPIMAGE)
-        }),
-        route: routeLabel(index, routes),
-        httpProxyUnreachable: plan.httpProxyUnreachable
+        })
       }
     } catch (error) {
       lastError = error
+      // 配置的那条通路没通就落到直连 —— 只在日志里记一笔，界面不为它占一行字
+      if (index === 0 && routes.length > 1) noteProxyFallback('配置的代理通路没连上')
     }
   }
 

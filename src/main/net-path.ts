@@ -5,16 +5,15 @@
  * 没有 session 这一项（只有 `bypassCustomProtocolHandlers`）—— 想走客户端自己探活过的那条
  * 代理，只能 `net.request({ session })`。下载安装包又得边收边写盘，正好是同一条路。
  *
- * **通路有两条，按优先级试**：配置的那条（加速前缀 + 探活通过的代理）→ 直连。前者失败就落到
- * 后者，并把「实际用了哪条」报上去（`ClientUpdateRoute`）。服务器上配的代理在本机不一定连得上，
- * 这件事必须让人看得见，不能静默换路。
+ * **通路有两条，按优先级试**：配置的那条（加速前缀 + 探活通过的代理）→ 直连。
+ * ★ 换路只在主进程日志里记一笔（`noteProxyFallback`），**不进界面**：服务端的代理在客户端
+ *   连不上是我们自己的配置差异，用户既改不了也不关心，为它占一行字只会让人以为出了问题。
  */
 
 import { net, session } from 'electron'
 import type { ClientRequest, IncomingMessage } from 'electron'
 
 import { applyGithubProxy } from '@shared/github-discovery'
-import type { ClientUpdateRoute } from '@shared/ipc'
 
 import type { ProxyPlan } from './proxy'
 
@@ -39,10 +38,14 @@ export function routesFor(plan: ProxyPlan): NetRoute[] {
   return configured.prefix || configured.proxyRules ? [configured, DIRECT] : [DIRECT]
 }
 
-/** 第 index 条通路成功了，这次算走了什么 */
-export function routeLabel(index: number, routes: readonly NetRoute[]): ClientUpdateRoute {
-  if (routes.length === 1) return 'direct'
-  return index === 0 ? 'proxy' : 'proxy-fallback'
+/**
+ * 「这次没用上配置的代理」的内部提示。
+ *
+ * 只写主进程日志（与 `[dlna]` / `[tray]` 那些内部告警同一个去处）：界面上**没有**这句话，
+ * 换路对用户来说是透明的 —— 该查到更新就查到、该下下来就下下来。
+ */
+export function noteProxyFallback(reason: string): void {
+  console.warn(`[update] ${reason}，本次改用直连`)
 }
 
 function namedError(name: string, message: string, cause?: unknown): Error {

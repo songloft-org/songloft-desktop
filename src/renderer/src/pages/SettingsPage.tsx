@@ -3239,11 +3239,6 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
       ? Math.min(100, Math.round((progress.received / progress.total) * 100))
       : null
   const canDownload = newer && asset !== null && !downloading && file === null
-  /** 服务端配的代理在本机用不上：检查与下载都要说一句，别让人对着一个连不上的代理猜 */
-  const proxyFellBack = Boolean(
-    (check && (check.route === 'proxy-fallback' || check.httpProxyUnreachable)) ||
-    (file && (file.route === 'proxy-fallback' || file.httpProxyUnreachable))
-  )
 
   return (
     <Modal
@@ -3386,12 +3381,6 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
             </button>
           </div>
         </>
-      ) : null}
-
-      {proxyFellBack ? (
-        <p className="field-hint" style={{ marginTop: 10 }}>
-          服务端配的代理在本机用不上（HTTP 代理探不通，或加速前缀连不上），这次已改为直连。
-        </p>
       ) : null}
 
       <p className="field-hint" style={{ marginTop: 10 }}>

@@ -21,7 +21,7 @@ import type {
   ClientUpdateProgress
 } from '@shared/ipc'
 
-import { abortError, getStream, routeLabel, routesFor, type NetRoute } from './net-path'
+import { abortError, getStream, noteProxyFallback, routesFor, type NetRoute } from './net-path'
 import { planProxies } from './proxy'
 
 /** 从发起到收到响应头的上限；真正的大头在响应体里，另有停滞看门狗 */
@@ -237,6 +237,10 @@ export async function downloadClientUpdate(
 
   const url = validateAssetUrl(request.asset.url)
   const plan = await planProxies(request)
+  if (plan.httpProxyUnreachable) {
+    noteProxyFallback('服务端配的 HTTP 代理在本机连不上（TCP 探活失败）')
+  }
+
   const routes = routesFor(plan)
 
   const controller = new AbortController()
@@ -265,17 +269,14 @@ export async function downloadClientUpdate(
         // AppImage 下载下来默认没有执行位，双击会被当成普通文件
         if (file.toLowerCase().endsWith('.appimage')) await chmod(file, 0o755)
         lastFile = file
-        return {
-          path: file,
-          bytes,
-          route: routeLabel(index, routes),
-          httpProxyUnreachable: plan.httpProxyUnreachable
-        }
+        return { path: file, bytes }
       } catch (error) {
         await rm(temp, { force: true }).catch(() => undefined)
         // 取消不是「通路失败」：换个通路再来一遍只会让用户觉得点了没反应
         if (isAbort(error)) throw new Error('已取消下载', { cause: error })
         lastError = error
+        // 配置的那条通路没通就落到直连 —— 只在日志里记一笔（界面不为它占一行字）
+        if (index === 0 && routes.length > 1) noteProxyFallback('配置的代理通路没连上')
       }
     }
 

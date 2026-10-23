@@ -403,15 +403,12 @@ export interface AppInfo {
 }
 
 /**
- * 这次联网实际走的通路。
+ * 服务端设置里的两项代理，原样传给主进程（客户端不保存它们，也不改它们）。
  *
- * 设置页里那两项代理是**服务端设置**，客户端借来下载只是顺手 —— 代理可能只跑在服务器
- * 本机或它的内网里。所以每一次联网都要如实回报走了哪条：界面据此说明「代理用不上，
- * 已改为直连」，而不是让人对着一个连不上的代理猜。
+ * ★ 它们可能只跑在服务器本机或它的内网里，客户端未必连得到 —— 所以主进程用之前会先判定，
+ *   用不上就直连。换路这件事**不进界面**（只在主进程日志里记一笔，见 main/net-path.ts）：
+ *   那是我方的配置差异，用户既改不了也不关心。
  */
-export type ClientUpdateRoute = 'direct' | 'proxy' | 'proxy-fallback'
-
-/** 服务端设置里的两项代理，原样传给主进程（客户端不保存它们，也不改它们） */
 export interface ClientUpdateProxies {
   /** 「GitHub 加速代理」：拼在 GitHub 地址前面的前缀，如 https://ghfast.top/ */
   githubProxy: string
@@ -440,10 +437,6 @@ export interface ClientUpdateCheck {
    *   渲染层拿到的 AppInfo.platform 是拼出来的字符串，反解析只会多一处漂移。
    */
   asset: ClientUpdateAsset | null
-  /** 这次实际走的通路（配了代理却用不上时是 proxy-fallback） */
-  route: ClientUpdateRoute
-  /** 服务端配了 HTTP 代理、但本机连不上（界面据此说明「已改为直连」） */
-  httpProxyUnreachable: boolean
 }
 
 /** 下载安装包的请求：要下哪一份，以及那两项服务端代理（主进程据此决定走哪条通路） */
@@ -457,10 +450,6 @@ export interface ClientUpdateDownloadResult {
   path: string
   /** 实际写入的字节数 */
   bytes: number
-  /** 这次实际走的通路（同 ClientUpdateCheck.route） */
-  route: ClientUpdateRoute
-  /** 服务端配了 HTTP 代理、但本机连不上 */
-  httpProxyUnreachable: boolean
 }
 
 /** 下载进度。`total` 为 0 表示两边都不知道总长，只能显示「已下载多少」 */
