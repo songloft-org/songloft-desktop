@@ -9,6 +9,9 @@ import type {
   AppInfo,
   AppSettings,
   ClientUpdateCheck,
+  ClientUpdateDownloadRequest,
+  ClientUpdateDownloadResult,
+  ClientUpdateProgress,
   ClientUpdateProxies,
   FileOpenResult,
   FileSaveResult,
@@ -161,6 +164,22 @@ export interface SongloftBridge {
      * 并把实际走的通路回报在 `route` 里。
      */
     checkClientUpdate(proxies: ClientUpdateProxies): Promise<ClientUpdateCheck>
+    /**
+     * 把安装包下到本机「下载」目录。
+     *
+     * **只下载，不替换自身二进制**（理由见 src/main/update-download.ts）：下好之后由
+     * openClientUpdate 把它交给系统安装程序。进度经 onClientUpdateProgress 推回来 ——
+     * 下载不随弹窗开关中断，所以进度必须由订阅方自己收着，而不是由发起方等 promise。
+     */
+    downloadClientUpdate(request: ClientUpdateDownloadRequest): Promise<ClientUpdateDownloadResult>
+    /** 取消正在跑的下载（没在跑时什么也不做） */
+    cancelClientUpdate(): Promise<void>
+    /** 用系统默认程序打开刚下好的安装包；没下过时抛错 */
+    openClientUpdate(): Promise<void>
+    /** 在文件管理器里定位刚下好的安装包 */
+    revealClientUpdate(): Promise<void>
+    /** 下载进度；返回取消订阅函数 */
+    onClientUpdateProgress(handler: (progress: ClientUpdateProgress) => void): () => void
   }
   /**
    * 「GitHub 发现」：插件商店里那一份社区来源。

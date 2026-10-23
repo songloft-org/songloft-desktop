@@ -18,6 +18,7 @@ import {
   IPC,
   type AppInfo,
   type AppSettings,
+  type ClientUpdateDownloadRequest,
   type ClientUpdateProxies,
   type MediaCommand,
   type MiniCommand,
@@ -30,6 +31,12 @@ import { installAppMenu } from './app-menu'
 import { applyLocalCacheLimit, clearLocalCache, readLocalCache } from './cache'
 import { discoverGithubPlugins } from './github-discovery'
 import { checkClientUpdate } from './release'
+import {
+  cancelClientUpdate,
+  downloadClientUpdate,
+  openDownloadedUpdate,
+  revealDownloadedUpdate
+} from './update-download'
 import { dlnaController } from './dlna'
 import { openTextFile, saveTextFile } from './files'
 import {
@@ -650,6 +657,18 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC.clientUpdateCheck, (_event, proxies?: ClientUpdateProxies) =>
     checkClientUpdate(proxies)
   )
+  /*
+   * 安装包下载。进度发回**发起下载的那个窗口**（`event.sender`）而不是 sendToRenderer：
+   * 这条流只属于它，发广播会让迷你窗也收到一份没人看的进度。
+   */
+  ipcMain.handle(IPC.clientUpdateDownload, (event, request: ClientUpdateDownloadRequest) =>
+    downloadClientUpdate(request, (progress) => {
+      if (!event.sender.isDestroyed()) event.sender.send(IPC.onClientUpdateProgress, progress)
+    })
+  )
+  ipcMain.handle(IPC.clientUpdateCancel, () => cancelClientUpdate())
+  ipcMain.handle(IPC.clientUpdateOpen, () => openDownloadedUpdate())
+  ipcMain.handle(IPC.clientUpdateReveal, () => revealDownloadedUpdate())
   ipcMain.handle(IPC.githubDiscovery, (_event, request: GithubDiscoveryRequest) =>
     discoverGithubPlugins(request)
   )

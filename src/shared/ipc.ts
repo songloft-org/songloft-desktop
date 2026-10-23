@@ -65,6 +65,14 @@ export const IPC = {
   appInfo: 'app:info',
   /** 主进程代查 GitHub 上的最新 release（渲染层不直连第三方，也省掉 CORS 与 UA 的坑） */
   clientUpdateCheck: 'app:check-client-update',
+  /** 把安装包下到「下载」目录（只下载，不替换自身二进制，见 main/update-download.ts） */
+  clientUpdateDownload: 'app:download-client-update',
+  /** 取消正在跑的下载 */
+  clientUpdateCancel: 'app:cancel-client-update',
+  /** 用系统默认程序打开刚下好的安装包（不接路径参数，只认主进程记下的那一个） */
+  clientUpdateOpen: 'app:open-client-update',
+  /** 在文件管理器里定位刚下好的安装包 */
+  clientUpdateReveal: 'app:reveal-client-update',
   /**
    * 主进程代查「GitHub 发现」（插件商店里的那一份社区来源）。
    *
@@ -117,6 +125,8 @@ export const IPC = {
   castStop: 'cast:stop',
 
   // ── 主进程 → 渲染层（单向推送）────────────────────────────────────────
+  /** 安装包下载进度（推给主窗口；下载不随弹窗开关而中断，所以状态由订阅方自己收着） */
+  onClientUpdateProgress: 'app:client-update-progress',
   onMediaCommand: 'media:command',
   /** 投送状态（进度 / 在不在放 / 播完了） */
   onCastState: 'cast:state',
@@ -434,6 +444,29 @@ export interface ClientUpdateCheck {
   route: ClientUpdateRoute
   /** 服务端配了 HTTP 代理、但本机连不上（界面据此说明「已改为直连」） */
   httpProxyUnreachable: boolean
+}
+
+/** 下载安装包的请求：要下哪一份，以及那两项服务端代理（主进程据此决定走哪条通路） */
+export interface ClientUpdateDownloadRequest extends ClientUpdateProxies {
+  /** 要下的那一份 —— 就是 ClientUpdateCheck.asset 给出来的那个 */
+  asset: ClientUpdateAsset
+}
+
+export interface ClientUpdateDownloadResult {
+  /** 落到本机的绝对路径（在「下载」目录里） */
+  path: string
+  /** 实际写入的字节数 */
+  bytes: number
+  /** 这次实际走的通路（同 ClientUpdateCheck.route） */
+  route: ClientUpdateRoute
+  /** 服务端配了 HTTP 代理、但本机连不上 */
+  httpProxyUnreachable: boolean
+}
+
+/** 下载进度。`total` 为 0 表示两边都不知道总长，只能显示「已下载多少」 */
+export interface ClientUpdateProgress {
+  received: number
+  total: number
 }
 
 /** 扩展主框架里那条侧边栏的形态：展开 / 折叠成图标条 / 整个隐藏 */
