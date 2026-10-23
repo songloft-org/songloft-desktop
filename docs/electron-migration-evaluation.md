@@ -446,7 +446,8 @@ Electron 产物的体积构成（`release/linux-unpacked`，共 284 MB）：
 **阶段二 — 桌面端差异化能力（迁移的正当代价所在）**
 5. `jsplugin`：设计宿主在 JS 运行时的沙箱插件 API，并**评估能否让同一批插件同时服务移动端**（这是迁移最可能产生溢出收益的地方）。
 6. 无缝播放 / 淡入淡出。
-7. 自动更新（electron-updater）+ 崩溃上报。
+7. 客户端更新：应用内下载安装包 + 交给系统安装（**不用 electron-updater 自替换二进制**，
+   见 AGENTS.md §8.21）；崩溃上报仍未做。
 
 **阶段三 — 平台与发布**
 8. Windows / macOS 打包与签名（macOS 需 notarization）。

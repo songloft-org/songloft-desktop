@@ -113,6 +113,10 @@ src/
 │  ├─ local-files.ts  本地文件的收件口：启动参数 / macOS open-file / 文件对话框（排队 + 摇铃）
 │  ├─ media-protocol.ts 本地文件的媒体协议 songloft-media://（按 Range 读字节；见 §8.16）
 │  ├─ github-discovery.ts 「GitHub 发现」的请求与逐仓库核对（缓存 / 限流 / Token；见 §8.12）
+│  ├─ release.ts      客户端更新：查 GitHub release，挑出本机该下的那份安装包（见 §8.21）
+│  ├─ proxy.ts        「服务器配的那个代理，本机能不能用」：解析 + TCP 探活
+│  ├─ net-path.ts     主进程出网：加速前缀 + Session 代理；配置那条不通就落直连
+│  ├─ update-download.ts 安装包下载（进度 / 取消 / 落盘 / 校验），装交给系统（见 §8.21）
 │  ├─ tray.ts         托盘图标与菜单
 │  └─ app-menu.ts     应用菜单（窗口无边框、看不到菜单栏，但它提供全局加速键）
 ├─ preload/        contextBridge 白名单 —— 渲染层唯一的对外通道（window.songloft）
@@ -127,6 +131,7 @@ src/
 │  ├─ data.ts         两份数据快照是否等价（页面切回时的**静默刷新**靠它判断「要不要动界面」）
 │  ├─ metadata.ts     元数据缺口判定 / 「只补缺失」的合并 / 封面与标题的降级口径
 │  ├─ github-discovery.ts 「GitHub 发现」的纯逻辑：清单 / Release 校验、搜索语句、卡片状态（§8.12）
+│  ├─ update.ts       客户端更新：从 release 资产里挑「本机该下的那一份」（§8.21）
 │  ├─ window-role.ts  「这个渲染进程是哪种窗口」的契约（主进程写 hash、渲染层读；见 §8.17）
 │  ├─ version.ts      版本号比较（认不出来的写法一律判「不比它新」，宁可少提示一次更新）
 │  └─ links.ts        对外 URL 常量（本仓库 / 上游）
@@ -142,6 +147,7 @@ src/
    │                 useLocalFiles（本地文件的收件箱：路径 → 队列，免登录也能用，见 §8.16）/
    │                 usePlugins（已装扩展 + 顺序 + 运行时音频状态，唯一事实源）/
    │                 useLibrary（曲库数据的版本号 + 后台任务守望，见 §5.7）/
+   │                 useClientUpdate（客户端更新的界面状态：查 / 下 / 打开安装包，见 §8.21）/
    │                 song-metadata（起播时按缺口补齐元数据：只补缺失 / 超时 / 缓存 / 请服务端补齐）/
    │                 play-order（按播放模式重建播放顺序 order 的纯函数：
    │                 随机 = 洗牌 + 当前曲留队首。★ 任何重建 order 的地方都必须走它——
@@ -884,6 +890,45 @@ token、码率偏好、要转码的格式都在渲染层，主进程再拼一份
 ★ `completed` 是一次性事件：主进程 `emit()` 里取走就清。不这么做的话，
 这类会循环的设备每轮轮询都满足「到末尾」，队列会被反复推进。
 
+### 8.21 客户端更新：只下载，不换自己的二进制
+
+「关于与更新」里查 GitHub release → 把本机那份安装包下到「下载」目录 → 交给**系统安装程序**
+（NSIS 向导 / 软件中心 / 挂载 dmg）。**应用不替换自身的二进制**，这是刻意的：AppImage 那套
+自更新是「先删旧文件、再移新文件」，NSIS 是静默重跑安装器，任何一步半路失败，用户手上就剩一个
+跑不起来的东西，而且没有回滚。装与不装仍由人点。
+
+为什么不用 Electron 内建的 `autoUpdater`：它只支持 macOS（且必须签名）与 Windows 的 Squirrel，
+**Linux 完全没有实现** —— 而本仓库的产物是 deb / AppImage / tar.gz / NSIS / dmg，一条都对不上。
+`electron-updater` 能覆盖 NSIS + AppImage，但那要走回「自替换」，还要动 CI 上传
+`latest*.yml` / `.blockmap`，macOS 还得有证书。
+
+几个已经踩过或容易踩的点：
+
+* **那两项代理是服务端设置**（`/settings/http-proxy`、`/settings/github-proxy`，管的是后端
+  访问外链）。客户端借来下载只是顺手：`127.0.0.1:7890` 那种地址在**服务器**上，客户端多半
+  连不到。所以 HTTP 代理用之前先探一次 TCP（`main/proxy.ts`，1.5 秒），连不上直接不用；
+  GitHub 加速前缀没有可探的端点，改成「先试它、失败再用直连重试一次」。实际走了哪条如实
+  回报在 `ClientUpdateRoute` 里，弹窗写明「已改为直连」—— 换路是静默发生的，不说就等于让人
+  对着一个连不上的代理猜。
+* **不能用 `net.fetch`**：代理挂在 `Session` 上，而 `net.fetch` 的 init 里没有 session 这一项。
+  一律走 `net.request({ session })`（`main/net-path.ts`）。同一个 session 上的代理是全局的，
+  所以「配代理 + 发请求 + 等响应头」那一段必须串行（`exclusive`），否则两条请求会串代理。
+* **挑安装包按扩展名来，每个平台只留一种**（`shared/update.ts`）：Windows 只认 `.exe`
+  （`.zip` 是免安装版）、macOS 只认 `.dmg`（`.zip` 是自动更新的原料）、Linux 按运行形态认
+  `.AppImage` 或 `.deb`，`.tar.gz` 一律不挑。**写着别的架构就绝不选**（arm64 的包装到 x64 上
+  比「这次装不了」更糟），名字里没写架构的照样收。
+* **`net.request` 的响应是个纯 EventEmitter，没有 `pause`**：背压只能靠文件流的缓冲兜住
+  （磁盘比网络快一个量级），但**停滞**必须自己看 —— 连接被中间设备挂住时它只会一直等，
+  界面上的表现是转圈转到天亮。这里 30 秒没有新数据就判失败。
+* **失败那条通路留下的 `.part` 一定删掉**：半份安装包留在下载目录里比没有更糟，用户会以为
+  它是完整的。
+* **`shell.openPath` / `showItemInFolder` 都不接受渲染层传路径**：只认主进程记下的那一个，
+  否则等于给渲染层一个「打开任意文件」的口子。资产地址也只收 https 的 GitHub 域名。
+* 下载状态在 `state/useClientUpdate`（zustand）里，而不是弹窗的 `useState`：下载动辄几分钟，
+  而弹窗随时会被关掉 —— 状态跟着组件走的话，重新打开就只剩一个「检查更新」按钮。
+  进度那条推送装在 `App.tsx` 那个**不带一次性守卫**的 effect 上（同 `installMiniHost` 的理由），
+  否则 dev 里 HMR 重新挂载之后进度会停在上一帧。
+
 ---
 
 ## 9. 不要做
@@ -896,6 +941,8 @@ token、码率偏好、要转码的格式都在渲染层，主进程再拼一份
 * 不要让应用在启动时自行往 `~/.local/share` 之类的用户目录写桌面条目 / 图标：桌面集成走
   `pnpm run desktop:install`（显式命令，§8.11）。
 * 不要给渲染层开 Node 能力，也不要为了省事把 `contextIsolation` / `sandbox` 关掉。
+* 不要让应用替换自身的二进制（自更新）：安装包下下来之后交给系统安装程序（§8.21）。
+  也不要拿 `net.fetch` 发要过代理的请求 —— 它接不了 session，代理只能挂在 `net.request` 上。
 * 不要让 `html` / `body` 铺底色，也别以为「给界面加一层 opacity」就够 —— 整窗透明度要
   透明窗口与整棵树 opacity 一起成立（§8.13）。
 * 不要在渲染层把 token 拼进请求头去取封面/音频 —— 那两处只能走查询参数。
