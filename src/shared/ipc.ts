@@ -8,6 +8,7 @@
 import type { GithubInstalls } from './github-discovery'
 import type { ParsedLyric } from './lyric'
 import type { PlayMode, Song } from './types'
+import type { ClientUpdateAsset } from './update'
 
 export const IPC = {
   // ── 配置持久化（主进程持有 JSON 文件，渲染层只透过 IPC 读写）────────────────
@@ -422,6 +423,13 @@ export interface ClientUpdateCheck {
   latestUrl: string
   /** 发布时间（ISO 字符串；拿不到就是空串） */
   publishedAt: string
+  /**
+   * 本机该下的那一份安装包（挑法见 shared/update.ts）；这次发布里没有本机可用的产物时是 null。
+   *
+   * ★ 挑的动作在主进程做：`process.platform` / `process.arch` / `APPIMAGE` 只有它知道，
+   *   渲染层拿到的 AppInfo.platform 是拼出来的字符串，反解析只会多一处漂移。
+   */
+  asset: ClientUpdateAsset | null
   /** 这次实际走的通路（配了代理却用不上时是 proxy-fallback） */
   route: ClientUpdateRoute
   /** 服务端配了 HTTP 代理、但本机连不上（界面据此说明「已改为直连」） */

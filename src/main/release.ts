@@ -16,6 +16,7 @@ import { app } from 'electron'
 
 import type { ClientUpdateCheck, ClientUpdateProxies } from '@shared/ipc'
 import { REPO_SLUG } from '@shared/links'
+import { pickUpdateAsset, type ClientUpdateAsset } from '@shared/update'
 
 import { getStream, readText, routeLabel, routesFor, type NetRoute } from './net-path'
 import { planProxies } from './proxy'
@@ -34,6 +35,22 @@ interface ReleasePayload {
   tag_name?: string
   html_url?: string
   published_at?: string
+  assets?: Array<{ name?: string; size?: number; browser_download_url?: string }>
+}
+
+/**
+ * 这份 release 挂了哪些资产。
+ *
+ * 只收「有名字 + 有下载地址」的项：GitHub 在资产还没传完时会给出缺字段的记录，
+ * 拿它去下载只会得到一个 404。
+ */
+function releaseAssets(payload: ReleasePayload): ClientUpdateAsset[] {
+  const assets: ClientUpdateAsset[] = []
+  for (const item of payload.assets ?? []) {
+    if (!item.name || !item.browser_download_url) continue
+    assets.push({ name: item.name, size: item.size ?? 0, url: item.browser_download_url })
+  }
+  return assets
 }
 
 /**
@@ -101,6 +118,12 @@ export async function checkClientUpdate(
         latestTag: data.tag_name ?? '',
         latestUrl: data.html_url ?? '',
         publishedAt: data.published_at ?? '',
+        // 挑「本机该下的那一份」：平台与架构只有主进程知道（APPIMAGE 也是运行期环境变量）
+        asset: pickUpdateAsset(releaseAssets(data), {
+          platform: process.platform,
+          arch: process.arch,
+          appImage: Boolean(process.env.APPIMAGE)
+        }),
         route: routeLabel(index, routes),
         httpProxyUnreachable: plan.httpProxyUnreachable
       }

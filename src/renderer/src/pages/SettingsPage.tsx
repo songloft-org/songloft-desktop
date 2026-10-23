@@ -3287,6 +3287,16 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
             <span className="stat-row-value">{released}</span>
           </div>
         ) : null}
+        {/* 安装包这一行只有在「挑到了本机那份」时才摆：挑不到时说「有 XXX MB」只会误导 */}
+        {newer && check?.asset ? (
+          <div className="stat-row">
+            <span>安装包</span>
+            <span className="stat-row-value">
+              {check.asset.name}
+              {check.asset.size > 0 ? ` · ${formatBytes(check.asset.size)}` : ''}
+            </span>
+          </div>
+        ) : null}
       </div>
 
       <div className="probe-result" data-state={error ? 'error' : 'ok'} style={{ marginTop: 10 }}>
@@ -3304,7 +3314,11 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
             (checking
               ? '正在检查 GitHub 上的最新版本…'
               : newer
-                ? `有新版本 ${formatVersion(check?.latestTag ?? '')}，到发布页下载`
+                ? check?.asset
+                  ? `有新版本 ${formatVersion(check.latestTag)}，可以在这里下载安装包`
+                  : `有新版本 ${formatVersion(
+                      check?.latestTag ?? ''
+                    )}，但这次的发布里没有本机可用的安装包，到发布页看`
                 : '已经是最新版本')}
         </span>
       </div>
