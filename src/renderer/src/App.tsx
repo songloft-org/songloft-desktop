@@ -54,6 +54,7 @@ import { PlaylistsPage } from './pages/PlaylistsPage'
 import { RecentPage } from './pages/RecentPage'
 import { SearchPage } from './pages/SearchPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { installClientUpdateProgress } from './state/useClientUpdate'
 import { installLocalFileIntake } from './state/useLocalFiles'
 import { installMediaCommands } from './state/media-commands'
 import { installMiniHost } from './state/mini-host'
@@ -185,6 +186,11 @@ export function App(): React.JSX.Element {
      * 重新挂载后不重新订阅的话，底栏会以为没在投送（设备其实还在放）。
      */
     const disposeCast = subscribeCastState()
+    /*
+     * 安装包下载进度（来自主进程的推送）。与上面几条同一处装：下载可能比一次 HMR 重新挂载
+     * 活得更久，装上就断的话进度会停在那一帧上（用户会以为下载卡住了）。
+     */
+    const disposeUpdateProgress = installClientUpdateProgress()
     const disposeOpen = window.songloft.mini.onOpen((open) => useUi.getState().setMiniOpen(open))
     const disposeState = window.songloft.on.windowState((state) => {
       const root = document.documentElement
@@ -195,6 +201,7 @@ export function App(): React.JSX.Element {
       disposeHost()
       disposeLocalFiles()
       disposeCast()
+      disposeUpdateProgress()
       disposeOpen()
       disposeState()
     }

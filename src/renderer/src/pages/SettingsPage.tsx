@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
-import type { AppInfo, ClientUpdateCheck, ServerProbeResult } from '@shared/ipc'
+import type { AppInfo, ServerProbeResult } from '@shared/ipc'
 import { REPO_RELEASES_URL, REPO_URL, UPSTREAM_URL } from '@shared/links'
 import type {
   AutoScanSetting,
@@ -40,6 +40,7 @@ import {
   IconEdit,
   IconExternal,
   IconFingerprint,
+  IconFolderOpen,
   IconLoader,
   IconLogout,
   IconMonitor,
@@ -123,6 +124,7 @@ import {
   latencyLevel
 } from '@/lib/format'
 import { requireClient, useAuth } from '@/state/useAuth'
+import { useClientUpdate } from '@/state/useClientUpdate'
 import { isMetadataRefreshRunning, isScanRunning, useLibrary } from '@/state/useLibrary'
 import { usePlayer } from '@/state/usePlayer'
 import { currentAccentHex, useSettings } from '@/state/useSettings'
@@ -3177,7 +3179,7 @@ function UpdateCard(): React.JSX.Element {
 
       <Row
         title="客户端更新"
-        desc="桌面端从 GitHub Releases 分发：应用不会自己替换自身的二进制，有新版本时到发布页下载，或由包管理器升级"
+        desc="桌面端从 GitHub Releases 分发：可以把安装包下到本机、交给系统安装程序，应用不会自己替换自身的二进制"
       >
         <button type="button" className="btn" onClick={() => setClientOpen(true)}>
           <IconRefresh size={15} />
@@ -3204,46 +3206,44 @@ function UpdateCard(): React.JSX.Element {
 }
 
 /**
- * 客户端更新（桌面端自己）。
+ * 客户端更新（桌面端自己）：查 → 下 → 交给系统安装程序。
  *
- * 只报「有没有新版本」并把发布页交出去 —— 不做下载、不做安装。理由是桌面端的二进制归安装包
- * 与包管理器管：应用替自己换二进制一旦半路失败（下载中断、目录不可写、替换到一半），用户手上
- * 就剩一个跑不起来的客户端，而且那一套流程**没有回滚**（见 src/main/release.ts 的注释）。
+ * **仍然不替换自身的二进制**：桌面端的二进制归安装包与包管理器管 —— 应用替自己换一旦半路
+ * 失败（下载中断、目录不可写、替换到一半），用户手上就剩一个跑不起来的东西，而且没有回滚。
+ * 所以这里只把安装包下到「下载」目录，再用系统默认程序把它打开（NSIS 安装向导 / 软件中心 /
+ * 挂载 dmg），装与不装仍由人点（见 src/main/update-download.ts）。
+ *
+ * 状态放在 useClientUpdate 里而不是这里：下载动辄几分钟，而弹窗随时会被关掉。
  */
 function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Element {
   // 本机版本走 app.info：它是本地的、必定拿得到，于是检查失败时这张表也不会空着
   const info = useAsync(() => window.songloft.app.info(), [])
-  const [check, setCheck] = useState<ClientUpdateCheck | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [checking, setChecking] = useState(true)
+  const { check, checking, error, downloading, progress, file, downloadError } = useClientUpdate()
+  const checkNow = useClientUpdate((s) => s.checkNow)
+  const download = useClientUpdate((s) => s.download)
+  const cancel = useClientUpdate((s) => s.cancel)
+  const openFile = useClientUpdate((s) => s.openFile)
+  const revealFile = useClientUpdate((s) => s.revealFile)
 
   useEffect(() => {
-    // 代理从后端读，但**读不到也照查**：客户端更新不该被后端可达性牵连，直连 GitHub 试一次。
-    // ★ 取代理那一步得先包进 Promise 里再调用：没有会话时 `requireClient()` 是**同步抛**的，
-    //   直接 `getGithubProxy(requireClient())` 会抛在 effect 里、把整棵组件树掀掉 —— 而免登录
-    //   模式下这一页是能进来的（见 SettingsPage 的 guest 过滤）。包进去之后它变成「读不到」，
-    //   落到下面那个 catch 上，正好就是这句注释本来要的意思。
-    void Promise.resolve()
-      .then(() => {
-        const client = requireClient()
-        // 两项代理都要：GitHub 加速前缀决定走哪条通路，HTTP 代理要由主进程探一次 TCP
-        // 才知道本机能不能用（它们是服务端设置，客户端未必连得到）
-        return Promise.all([
-          getGithubProxy(client).catch(() => ''),
-          getHttpProxy(client).catch(() => '')
-        ])
-      })
-      .then(([githubProxy, httpProxy]) =>
-        window.songloft.app.checkClientUpdate({ githubProxy, httpProxy })
-      )
-      .then(setCheck)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : '检查更新失败'))
-      .finally(() => setChecking(false))
-  }, [])
+    // 每次打开都重新查一次：上一次的结果可能是几分钟前的，而这里本来就只有一个入口
+    void checkNow()
+  }, [checkNow])
 
   const current = info.data?.version ?? ''
   const newer = check !== null && isNewerVersion(check.latestTag, current)
   const released = formatDate(check?.publishedAt)
+  const asset = check?.asset ?? null
+  const percent =
+    progress && progress.total > 0
+      ? Math.min(100, Math.round((progress.received / progress.total) * 100))
+      : null
+  const canDownload = newer && asset !== null && !downloading && file === null
+  /** 服务端配的代理在本机用不上：检查与下载都要说一句，别让人对着一个连不上的代理猜 */
+  const proxyFellBack = Boolean(
+    (check && (check.route === 'proxy-fallback' || check.httpProxyUnreachable)) ||
+    (file && (file.route === 'proxy-fallback' || file.httpProxyUnreachable))
+  )
 
   return (
     <Modal
@@ -3258,7 +3258,7 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
           <button
             type="button"
             className="btn"
-            data-variant="primary"
+            data-variant={canDownload ? undefined : 'primary'}
             onClick={() =>
               void window.songloft.shell.openExternal(check?.latestUrl || REPO_RELEASES_URL)
             }
@@ -3266,6 +3266,17 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
             <IconExternal size={15} />
             打开发布页
           </button>
+          {canDownload ? (
+            <button
+              type="button"
+              className="btn"
+              data-variant="primary"
+              onClick={() => void download()}
+            >
+              <IconDownload size={15} />
+              下载安装包
+            </button>
+          ) : null}
         </>
       }
     >
@@ -3288,19 +3299,23 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
           </div>
         ) : null}
         {/* 安装包这一行只有在「挑到了本机那份」时才摆：挑不到时说「有 XXX MB」只会误导 */}
-        {newer && check?.asset ? (
+        {newer && asset ? (
           <div className="stat-row">
             <span>安装包</span>
             <span className="stat-row-value">
-              {check.asset.name}
-              {check.asset.size > 0 ? ` · ${formatBytes(check.asset.size)}` : ''}
+              {asset.name}
+              {asset.size > 0 ? ` · ${formatBytes(asset.size)}` : ''}
             </span>
           </div>
         ) : null}
       </div>
 
-      <div className="probe-result" data-state={error ? 'error' : 'ok'} style={{ marginTop: 10 }}>
-        {error ? (
+      <div
+        className="probe-result"
+        data-state={error || downloadError ? 'error' : 'ok'}
+        style={{ marginTop: 10 }}
+      >
+        {error || downloadError ? (
           <IconAlert size={15} />
         ) : checking ? (
           <IconLoader size={15} />
@@ -3311,11 +3326,12 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
         )}
         <span>
           {error ??
+            downloadError ??
             (checking
               ? '正在检查 GitHub 上的最新版本…'
               : newer
-                ? check?.asset
-                  ? `有新版本 ${formatVersion(check.latestTag)}，可以在这里下载安装包`
+                ? asset
+                  ? `有新版本 ${formatVersion(check.latestTag)}，可以下载安装包`
                   : `有新版本 ${formatVersion(
                       check?.latestTag ?? ''
                     )}，但这次的发布里没有本机可用的安装包，到发布页看`
@@ -3323,15 +3339,64 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
         </span>
       </div>
 
-      {check && (check.route === 'proxy-fallback' || check.httpProxyUnreachable) ? (
+      {downloading ? (
+        <div style={{ marginTop: 12 }}>
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${percent ?? 0}%` }} />
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginTop: 8
+            }}
+          >
+            <span className="field-hint">
+              {percent !== null ? `${percent}% · ` : ''}
+              {formatBytes(progress?.received ?? 0)}
+              {progress && progress.total > 0 ? ` / ${formatBytes(progress.total)}` : ''}
+            </span>
+            <button type="button" className="btn" data-size="sm" onClick={cancel}>
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {file ? (
+        <>
+          <div className="probe-result" data-state="ok" style={{ marginTop: 10 }}>
+            <IconCheck size={15} />
+            <span>安装包已保存到 {file.path}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button
+              type="button"
+              className="btn"
+              data-variant="primary"
+              onClick={() => void openFile()}
+            >
+              <IconDownload size={15} />
+              打开安装包
+            </button>
+            <button type="button" className="btn" onClick={() => void revealFile()}>
+              <IconFolderOpen size={15} />
+              打开所在文件夹
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {proxyFellBack ? (
         <p className="field-hint" style={{ marginTop: 10 }}>
           服务端配的代理在本机用不上（HTTP 代理探不通，或加速前缀连不上），这次已改为直连。
         </p>
       ) : null}
 
       <p className="field-hint" style={{ marginTop: 10 }}>
-        桌面端由安装包 / 包管理器分发，应用不会去替换自身的二进制 ——
-        换到一半失败会留下一个跑不起来的客户端， 而且没有回滚。所以这里只负责告诉你有新版本。
+        这里只把安装包下到「下载」目录，安装交给系统安装程序 —— 应用不去替换自身的二进制：
+        换到一半失败会留下一个跑不起来的客户端，而且没有回滚。
       </p>
     </Modal>
   )
