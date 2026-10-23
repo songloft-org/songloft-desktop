@@ -3224,9 +3224,18 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
     //   模式下这一页是能进来的（见 SettingsPage 的 guest 过滤）。包进去之后它变成「读不到」，
     //   落到下面那个 catch 上，正好就是这句注释本来要的意思。
     void Promise.resolve()
-      .then(() => getGithubProxy(requireClient()))
-      .catch(() => '')
-      .then((proxy) => window.songloft.app.checkClientUpdate(proxy))
+      .then(() => {
+        const client = requireClient()
+        // 两项代理都要：GitHub 加速前缀决定走哪条通路，HTTP 代理要由主进程探一次 TCP
+        // 才知道本机能不能用（它们是服务端设置，客户端未必连得到）
+        return Promise.all([
+          getGithubProxy(client).catch(() => ''),
+          getHttpProxy(client).catch(() => '')
+        ])
+      })
+      .then(([githubProxy, httpProxy]) =>
+        window.songloft.app.checkClientUpdate({ githubProxy, httpProxy })
+      )
       .then(setCheck)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : '检查更新失败'))
       .finally(() => setChecking(false))
@@ -3299,6 +3308,12 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
                 : '已经是最新版本')}
         </span>
       </div>
+
+      {check && (check.route === 'proxy-fallback' || check.httpProxyUnreachable) ? (
+        <p className="field-hint" style={{ marginTop: 10 }}>
+          服务端配的代理在本机用不上（HTTP 代理探不通，或加速前缀连不上），这次已改为直连。
+        </p>
+      ) : null}
 
       <p className="field-hint" style={{ marginTop: 10 }}>
         桌面端由安装包 / 包管理器分发，应用不会去替换自身的二进制 ——

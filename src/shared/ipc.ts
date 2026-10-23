@@ -392,10 +392,28 @@ export interface AppInfo {
 }
 
 /**
+ * 这次联网实际走的通路。
+ *
+ * 设置页里那两项代理是**服务端设置**，客户端借来下载只是顺手 —— 代理可能只跑在服务器
+ * 本机或它的内网里。所以每一次联网都要如实回报走了哪条：界面据此说明「代理用不上，
+ * 已改为直连」，而不是让人对着一个连不上的代理猜。
+ */
+export type ClientUpdateRoute = 'direct' | 'proxy' | 'proxy-fallback'
+
+/** 服务端设置里的两项代理，原样传给主进程（客户端不保存它们，也不改它们） */
+export interface ClientUpdateProxies {
+  /** 「GitHub 加速代理」：拼在 GitHub 地址前面的前缀，如 https://ghfast.top/ */
+  githubProxy: string
+  /** 「HTTP 代理」：后端访问外链用的代理；客户端用之前会先探一次 TCP */
+  httpProxy: string
+}
+
+/**
  * 「客户端更新」的检查结果。
  *
- * 只报「有没有新版本」与发布页地址，**不含**下载与安装：桌面端的二进制归安装包与包管理器管，
- * 应用自己去换自己这件事另有代价（见 settings 里那条说明），不在这一步里。
+ * 只报「有没有新版本」与发布页地址，**不含**安装：桌面端的二进制归安装包与包管理器管，
+ * 应用自己去换自己这件事另有代价（见 src/main/release.ts 的说明）—— 客户端只把安装包
+ * 下下来，装由系统安装程序完成。
  */
 export interface ClientUpdateCheck {
   /** GitHub 上最新 release 的 tag（一般是 v1.2.3） */
@@ -404,6 +422,10 @@ export interface ClientUpdateCheck {
   latestUrl: string
   /** 发布时间（ISO 字符串；拿不到就是空串） */
   publishedAt: string
+  /** 这次实际走的通路（配了代理却用不上时是 proxy-fallback） */
+  route: ClientUpdateRoute
+  /** 服务端配了 HTTP 代理、但本机连不上（界面据此说明「已改为直连」） */
+  httpProxyUnreachable: boolean
 }
 
 /** 扩展主框架里那条侧边栏的形态：展开 / 折叠成图标条 / 整个隐藏 */

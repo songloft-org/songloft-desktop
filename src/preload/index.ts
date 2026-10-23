@@ -14,6 +14,7 @@ import { IPC } from '@shared/ipc'
 import type {
   AppSettings,
   ClientUpdateCheck,
+  ClientUpdateProxies,
   FileOpenResult,
   FileSaveResult,
   LocalCacheStats,
@@ -108,8 +109,8 @@ const bridge: SongloftBridge = {
   },
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo),
-    checkClientUpdate: (proxyPrefix) =>
-      ipcRenderer.invoke(IPC.clientUpdateCheck, proxyPrefix) as Promise<ClientUpdateCheck>
+    checkClientUpdate: (proxies: ClientUpdateProxies) =>
+      ipcRenderer.invoke(IPC.clientUpdateCheck, proxies) as Promise<ClientUpdateCheck>
   },
   github: {
     discover: (request: GithubDiscoveryRequest) =>

@@ -18,6 +18,7 @@ import {
   IPC,
   type AppInfo,
   type AppSettings,
+  type ClientUpdateProxies,
   type MediaCommand,
   type MiniCommand,
   type MiniPlayerSnapshot,
@@ -646,8 +647,8 @@ function registerIpcHandlers(): void {
     appImage: Boolean(process.env.APPIMAGE),
     packaged: app.isPackaged
   }))
-  ipcMain.handle(IPC.clientUpdateCheck, (_event, proxyPrefix?: string) =>
-    checkClientUpdate(proxyPrefix)
+  ipcMain.handle(IPC.clientUpdateCheck, (_event, proxies?: ClientUpdateProxies) =>
+    checkClientUpdate(proxies)
   )
   ipcMain.handle(IPC.githubDiscovery, (_event, request: GithubDiscoveryRequest) =>
     discoverGithubPlugins(request)

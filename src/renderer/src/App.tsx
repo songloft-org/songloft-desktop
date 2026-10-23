@@ -28,7 +28,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { isNewerVersion } from '@shared/version'
-import { checkServerUpgrade, getGithubProxy } from './api/endpoints'
+import { checkServerUpgrade, getGithubProxy, getHttpProxy } from './api/endpoints'
 import { AddToPlaylistDialog } from './components/AddToPlaylistDialog'
 import { DlnaDialog } from './components/DlnaDialog'
 import { CommandPalette } from './components/CommandPalette'
@@ -92,10 +92,13 @@ async function checkUpdatesInBackground(): Promise<void> {
   const client = requireClient()
 
   // 代理拿不到（后端不可达）就直连；服务端那次也一样把代理传过去 —— 后端不会自己去读那项配置
-  const proxy = await getGithubProxy(client).catch(() => '')
+  const [githubProxy, httpProxy] = await Promise.all([
+    getGithubProxy(client).catch(() => ''),
+    getHttpProxy(client).catch(() => '')
+  ])
   const [release, upgrade, info] = await Promise.all([
-    window.songloft.app.checkClientUpdate(proxy).catch(() => null),
-    checkServerUpgrade(client, proxy).catch(() => null),
+    window.songloft.app.checkClientUpdate({ githubProxy, httpProxy }).catch(() => null),
+    checkServerUpgrade(client, githubProxy).catch(() => null),
     window.songloft.app.info().catch(() => null)
   ])
 

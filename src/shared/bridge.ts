@@ -9,6 +9,7 @@ import type {
   AppInfo,
   AppSettings,
   ClientUpdateCheck,
+  ClientUpdateProxies,
   FileOpenResult,
   FileSaveResult,
   LocalCacheStats,
@@ -154,10 +155,12 @@ export interface SongloftBridge {
     /**
      * 查 GitHub 上有没有新的客户端版本（只查不装）。
      *
-     * 传「GitHub 加速代理」前缀；老后端没有这项设置时传空串即可。主进程代查是因为渲染层
+     * 两项代理都来自**服务端设置**，老后端没有对应端点时传空串即可。主进程代查是因为渲染层
      * 直连第三方会撞上 CORS 与 `User-Agent` 这两个改不动的限制（见 src/main/release.ts）。
+     * 服务端配的代理在本机不一定连得上 —— 主进程会先判定（HTTP 代理探 TCP），用不了就直连，
+     * 并把实际走的通路回报在 `route` 里。
      */
-    checkClientUpdate(proxyPrefix?: string): Promise<ClientUpdateCheck>
+    checkClientUpdate(proxies: ClientUpdateProxies): Promise<ClientUpdateCheck>
   }
   /**
    * 「GitHub 发现」：插件商店里那一份社区来源。
