@@ -420,5 +420,11 @@ export interface ResponseHeadersLike {
 export function isBackendLocalFile(headers: ResponseHeadersLike): boolean {
   const length = Number.parseInt(headers.get('content-length') ?? '', 10)
   const ranges = (headers.get('accept-ranges') ?? '').toLowerCase()
-  return Number.isFinite(length) && length > 0 && ranges === 'bytes'
+  /*
+   * ★ `no-store` 这一条不能少：实测实时转码那条流**也会报 `Accept-Ranges: bytes`**，
+   *   并且带上一个「按 CBR 估算」的整数长度（`Content-Range: bytes 0-0/6200000`，看着像真的）。
+   *   只看长度与 Range 会把正在实时转码的歌误判成「已经就绪」，预缓存就白等了。
+   */
+  const cache = (headers.get('cache-control') ?? '').toLowerCase()
+  return Number.isFinite(length) && length > 0 && ranges === 'bytes' && !cache.includes('no-store')
 }

@@ -252,4 +252,16 @@ describe('isBackendLocalFile', () => {
     expect(isBackendLocalFile(headers({ 'content-length': '8123456' }))).toBe(false)
     expect(isBackendLocalFile(headers({}))).toBe(false)
   })
+
+  it('实时转码流也报 Range 与估算长度，靠 no-store 认出来（真机实测）', () => {
+    expect(
+      isBackendLocalFile(
+        headers({
+          'content-length': '6200000',
+          'accept-ranges': 'bytes',
+          'cache-control': 'no-store'
+        })
+      )
+    ).toBe(false)
+  })
 })
