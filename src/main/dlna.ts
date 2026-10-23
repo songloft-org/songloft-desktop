@@ -40,8 +40,23 @@ import {
 
 /** 设备列表缓存：一轮发现要等 3 秒，别每开一次对话框就重搜一遍 */
 const DISCOVERY_TTL_MS = 60_000
-/** 状态轮询间隔。与渲染层无关 —— 这里一次轮询就是两台机器之间几个 HTTP 请求 */
+/**
+ * 状态轮询间隔（**上一轮回来之后再等这么久**，不是固定节拍）。
+ *
+ * ★ 这里一次轮询就是两台机器之间两三个 HTTP 请求，而设备同时还在自己拉音频流。
+ *   低端 DLNA 设备的 HTTP 服务很弱（有的几乎是单线程），控制请求一多，它读流就断 ——
+ *   所以宁可让进度条动得慢半拍，也不能给它加压。见 schedulePoll 的说明。
+ */
 const POLL_INTERVAL_MS = 2_000
+/**
+ * 投送刚开始的前几轮**每轮都读音量**。
+ *
+ * ★ 起播那一次读不到（设备正忙着 TRANSITIONING，实测小爱会拒绝），而底栏那根滑条要等
+ *   读到值才可用 —— 头几轮密集读是为了让它尽快恢复正常。
+ */
+const VOLUME_DENSE_ROUNDS = 10
+/** 之后每这么多轮读一次：音量不是每两秒都会变的东西，读太勤等于白给设备添活 */
+const VOLUME_EVERY_ROUNDS = 5
 
 interface Session {
   device: DlnaDevice
@@ -168,6 +183,8 @@ export class DlnaController {
   private session: Session | null = null
   private pollTimer: NodeJS.Timeout | null = null
   private pollCount = 0
+  /** 上一轮音量查询还没回来时不再发新的（慢设备上它会和下一轮甚至下下轮叠在一起） */
+  private volumeInFlight = false
   private listener: Listener | null = null
   private discovering: Promise<DlnaDevice[]> | null = null
 
@@ -632,14 +649,31 @@ export class DlnaController {
   private startPolling(): void {
     this.stopPolling()
     this.pollCount = 0
-    this.pollTimer = setInterval(() => {
-      void this.poll()
+    this.schedulePoll()
+  }
+
+  /**
+   * 排下一轮，**在本轮真正结束之后**。
+   *
+   * ★ 这里曾经用 `setInterval`，那是断断续续的一个直接来源：一轮里串着 `GetTransportInfo`
+   *   与 `GetPositionInfo`（各 4 秒超时），设备一慢，2 秒的节拍就赶在上一轮回来之前又叠一轮 ——
+   *   并发数越滚越多。而音箱此刻正自己拉着音频流，这些控制请求压在它的 HTTP 服务上
+   *   （低端设备几乎是单线程），它读流就断。
+   *   改成「上一轮结束 + 一个间隔」之后，慢设备只会让轮询变慢，不会让请求堆积。
+   */
+  private schedulePoll(): void {
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null
+      void this.poll().finally(() => {
+        // 轮询期间会话可能已经被收掉（clearSession 里 stopPolling 清过 timer），别再排
+        if (this.session) this.schedulePoll()
+      })
     }, POLL_INTERVAL_MS)
   }
 
   private stopPolling(): void {
     if (this.pollTimer) {
-      clearInterval(this.pollTimer)
+      clearTimeout(this.pollTimer)
       this.pollTimer = null
     }
   }
@@ -714,11 +748,13 @@ export class DlnaController {
       session.error = ''
       this.pollCount += 1
       /*
-       * 音量每轮都读：投送刚开始的那一次读不到（设备正忙着 TRANSITIONING，实测小爱会拒绝），
-       * 隔 5 轮再读就意味着底栏那根滑条要「不支持下音量」十秒才恢复正常。
-       * 只在值变了才 emit，所以这多出来的一个请求不会带来额外渲染。
+       * 音量**不能每轮都读**：投送刚开始的那一次读不到（设备正忙着 TRANSITIONING，实测小爱会拒绝），
+       * 但一直每轮读就是每 2 秒多一个 HTTP 请求压在正在拉流的设备上。
+       * 折中是「头几轮密集读（滑条尽快恢复）、之后降频」—— 音量不是每两秒都会变的东西。
        */
-      void this.readVolume()
+      if (this.pollCount <= VOLUME_DENSE_ROUNDS || this.pollCount % VOLUME_EVERY_ROUNDS === 0) {
+        void this.readVolume()
+      }
     } catch (error) {
       // 单次失败不当作会话结束（网络抖动 / 设备忙着切歌），把原因挂上去让人看见
       session.error = error instanceof Error ? error.message : String(error)
@@ -730,6 +766,12 @@ export class DlnaController {
   private async readVolume(): Promise<void> {
     const session = this.session
     if (!session?.device.volumeUrl || !session.device.volumeType) return
+    /*
+     * ★ 一次只放一个在飞：这个调用是 `void` 发出去的（不阻塞轮询），设备慢的时候
+     *   上一次还没回来下一次又发，等于在轮询之外又长出一条会堆积的请求线。
+     */
+    if (this.volumeInFlight) return
+    this.volumeInFlight = true
     try {
       const xml = await soapAction(
         session.device.volumeUrl,
@@ -739,7 +781,7 @@ export class DlnaController {
         3_000
       )
       const volume = Number.parseInt(parseSoapValue(xml, 'CurrentVolume'), 10)
-      // 只有值真的变了才推：poll 每轮都会调这里，无脑 emit 就是每 2 秒多余一次渲染
+      // 只有值真的变了才推：无脑 emit 就是每一轮多余一次渲染
       if (Number.isFinite(volume) && volume !== session.volume) {
         session.volume = volume
         this.emit()
@@ -747,6 +789,8 @@ export class DlnaController {
     } catch (error) {
       // 不支持音量控制就一直是 -1，界面据此把滑条置灰；日志留在主进程便于排查
       console.warn('[dlna] 读设备音量失败：', error instanceof Error ? error.message : error)
+    } finally {
+      this.volumeInFlight = false
     }
   }
 
