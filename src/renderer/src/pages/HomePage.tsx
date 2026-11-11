@@ -6,9 +6,10 @@
  *   * 歌单/歌手用卡片网格横向铺开，而不是移动端的两列纵向滚动
  *   * 卡片自带播放按钮（hover 才显形）：不用先进详情页就能开播
  *   * 「最近加入」是**单行**封面排（与「我的歌单」封面同宽，超出部分横向滚动/可按住拖动），
- *     而不是紧凑表格：首页的职责是「一眼看到有什么新东西」，封面比一行行的元数据有用，
- *     而占两行会把「我的歌单」「常听歌手」挤到首屏之外。要按列比较（时长/加入时间/专辑）
- *     或看完整列表时去曲库页
+ *     而不是紧凑表格：封面比一行行的元数据更适合「扫一眼有什么新东西」。要按列比较
+ *     （时长/加入时间/专辑）或看完整列表时去曲库页
+ *   * 分区块的顺序是：我的歌单 → 常听歌手 → 最近加入。前三者是「点进去听」的入口，优先占
+ *     首屏；「最近加入」是浏览性的（本来就在末尾一屏内，横向一行即可看全 8 张）
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -220,64 +221,6 @@ export function HomePage(): React.JSX.Element {
         </div>
       )}
 
-      {/* ── 最近加入 ── */}
-      <div className="section-title">
-        <span className="row" style={{ gap: 8 }}>
-          <IconClock size={16} />
-          最近加入
-        </span>
-        <button
-          type="button"
-          className="btn"
-          data-size="sm"
-          data-variant="ghost"
-          onClick={() => navigate({ name: 'library' })}
-        >
-          查看曲库
-        </button>
-      </div>
-
-      {recent.loading ? (
-        <CardGridSkeleton cards={8} scroll />
-      ) : recentSongs.length === 0 ? (
-        <EmptyState
-          icon={<IconLibrary size={26} />}
-          title="曲库还是空的"
-          description="在「设置 → 曲库」里指定音乐目录并开始扫描"
-          action={
-            <button
-              type="button"
-              className="btn"
-              data-variant="primary"
-              onClick={() => navigate({ name: 'settings', section: 'library' })}
-            >
-              去扫描
-            </button>
-          }
-        />
-      ) : (
-        <div
-          className="card-grid"
-          data-scroll="x"
-          data-dragging={recentRow.dragging}
-          ref={recentRow.ref}
-          style={
-            coverWidth === null
-              ? undefined
-              : ({ '--card-w': `${coverWidth}px` } as React.CSSProperties)
-          }
-        >
-          {recentSongs.map((song, index) => (
-            <RecentSongCard
-              key={song.id}
-              song={song}
-              onPlay={() => void playSongs(recentSongs, index, { type: 'home', key: 'recent' })}
-              onDeleted={() => recent.reload()}
-            />
-          ))}
-        </div>
-      )}
-
       {/* ── 我的歌单 ── */}
       <div className="section-title">
         <span className="row" style={{ gap: 8 }}>
@@ -339,6 +282,64 @@ export function HomePage(): React.JSX.Element {
               facet={facet}
               onOpen={() => navigate({ name: 'search', keyword: facet.value })}
               onPlay={() => void playArtist(facet.value)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── 最近加入 ── */}
+      <div className="section-title">
+        <span className="row" style={{ gap: 8 }}>
+          <IconClock size={16} />
+          最近加入
+        </span>
+        <button
+          type="button"
+          className="btn"
+          data-size="sm"
+          data-variant="ghost"
+          onClick={() => navigate({ name: 'library' })}
+        >
+          查看曲库
+        </button>
+      </div>
+
+      {recent.loading ? (
+        <CardGridSkeleton cards={8} scroll />
+      ) : recentSongs.length === 0 ? (
+        <EmptyState
+          icon={<IconLibrary size={26} />}
+          title="曲库还是空的"
+          description="在「设置 → 曲库」里指定音乐目录并开始扫描"
+          action={
+            <button
+              type="button"
+              className="btn"
+              data-variant="primary"
+              onClick={() => navigate({ name: 'settings', section: 'library' })}
+            >
+              去扫描
+            </button>
+          }
+        />
+      ) : (
+        <div
+          className="card-grid"
+          data-scroll="x"
+          data-dragging={recentRow.dragging}
+          ref={recentRow.ref}
+          style={
+            coverWidth === null
+              ? undefined
+              : ({ '--card-w': `${coverWidth}px` } as React.CSSProperties)
+          }
+        >
+          {recentSongs.map((song, index) => (
+            <RecentSongCard
+              key={song.id}
+              song={song}
+              onPlay={() => void playSongs(recentSongs, index, { type: 'home', key: 'recent' })}
+              onDeleted={() => recent.reload()}
             />
           ))}
         </div>
