@@ -165,6 +165,7 @@ src/
    │                  动作钮在第二行右端、与来源切换同一行）
    ├─ components/    Sidebar / TitleBar / SongTable / PlayerBar / LyricsView / CommandPalette /
    │                 Panel / ContextMenu / Modal / Toasts / SelectionBar /
+   │                 Overlay（弹层骨架：定位层 + 遮罩，Modal 与命令面板共用，见 §8.22）/
    │                 FullPlayer（满窗播放：盖在原生面上的浮层）/
    │                 MiniPlayer（迷你窗那一条，跑在**另一个窗口**里，见 §4）/
    │                 （同目录的 ../MiniApp.tsx 是那个窗口的根，与 App.tsx 并列）
@@ -625,8 +626,8 @@ query 回退分支）—— 按「像不像外链」判断会让整店退成首�
 | 整棵界面树带 opacity | `styles/base.css` 里 `body { opacity: var(--window-opacity) }` | 窗口虽有 alpha 通道，可每一层画上去的都是实心的，全被遮住 |
 
 配套的三条：`html` / `body` **不许铺底色**（主窗口里底色一律由 `.shell` 画，迷你窗里由
-`.mini-bar` / `.mini-panel` 画）；这条 opacity 挂在 `body` 而不是 `#root` 上 —— `Modal` 是
-portal 到 `body` 的（见 `components/Modal.tsx`），挂在 `#root` 里的话对话框不跟着透，一开一关
+`.mini-bar` / `.mini-panel` 画）；这条 opacity 挂在 `body` 而不是 `#root` 上 —— 弹层是
+portal 到 `body` 的（见 `components/Overlay.tsx`），挂在 `#root` 里的话对话框不跟着透，一开一关
 是两个浓度；迷你那一份（`--mini-window-opacity`）由 `html[data-mini='true'] body` 顶掉 ——
 两个窗口各是一棵独立的界面树，但**共用同一份样式表与同一套变量名**，不靠 <html> 上那个标记
 （`main.tsx` 在第一帧之前就打上）就分不开。
@@ -935,6 +936,35 @@ token、码率偏好、要转码的格式都在渲染层，主进程再拼一份
   而弹窗随时会被关掉 —— 状态跟着组件走的话，重新打开就只剩一个「检查更新」按钮。
   进度那条推送装在 `App.tsx` 那个**不带一次性守卫**的 effect 上（同 `installMiniHost` 的理由），
   否则 dev 里 HMR 重新挂载之后进度会停在上一帧。
+
+### 8.22 弹层（对话框 / 命令面板）是三层**兄弟**，遮罩不能当面板的父级
+
+`components/Overlay.tsx` 一处，`Modal` 与 `CommandPalette` 都走它：
+
+```
+.overlay        定位层：只决定面板摆在哪，自己不画一个像素（fixed + inset: --win-inset + grid）
+  .overlay-mask 遮罩：底色 + backdrop-filter + 淡入，独立一层
+  .modal        面板：自带 box-shadow
+```
+
+四条为什么（改动前是一层套一层，以上四条全踩过）：
+
+1. **遮罩不能是面板的父级**。面板的 `backdrop-filter` 只糊得到「最近一道背景根」以内的东西，
+   而带 `backdrop-filter` / `opacity` / `transform` 的祖先就是一道背景根。遮罩天生两样都带，
+   于是玻璃糊到的是遮罩自己那块，糊不到页面 —— 更糟的是淡入那一段 `opacity < 1`，
+   淡入一结束玻璃当场变样。拆成兄弟，面板背后就是真实页面。
+2. **定位层不许带 overflow / opacity / transform**：前三个都会裁掉或改变面板投在**框外**的
+   阴影（`box-shadow` 画在框外，`overflow` 剪、`transform` 拖）。它只是个网格盒。
+3. **遮罩与面板只差 z-index（0 / 1），不各占一个层叠上下文**：这样「面板那一整块绘制
+   （含框外投影）压住遮罩」是结构保证，而不依赖谁先被绘制 —— 阴影既不会被遮罩底色盖掉，
+   也不需要给遮罩留一个「不铺阴影区」的洞。
+4. **遮罩的 inset 用 `--win-inset`，不是 0**：那圈（`#root` 的内边距）里画的是**窗口**阴影，
+   遮罩铺到窗口边缘会把整圈阴影盖成一条黑边（透明窗口下就是「开弹窗窗口变方」）。
+   令牌挂在 `<html>` 上、最大化时收成 0，`#root` 与遮罩一起吃它。
+
+配套：两处面板都要 `position: relative; z-index: 1`（遮罩是 absolute，面板若是 static 会被它
+盖住）；宽度按**层的内容盒**算 `min(520px, 100%)`，不要对着 `100vw`（可见面比窗口小一圈）。
+想加新弹层就复用一个 `Overlay`，别再各写一套遮罩。
 
 ---
 

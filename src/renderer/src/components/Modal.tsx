@@ -1,9 +1,9 @@
-/** 模态框：portal 到 body，Esc 关闭，锁滚动 */
+/** 模态框：遮罩 + 面板（portal 到 body，见 Overlay），Esc 关闭 */
 
 import { useEffect } from 'react'
-import { createPortal } from 'react-dom'
 
 import { IconClose } from './Icons'
+import { Overlay } from './Overlay'
 
 export interface ModalProps {
   title: string
@@ -34,13 +34,8 @@ export function Modal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  return createPortal(
-    <div
-      className="overlay"
-      onPointerDown={(event) => {
-        if (closeOnBackdrop && event.target === event.currentTarget) onClose()
-      }}
-    >
+  return (
+    <Overlay onDismiss={closeOnBackdrop ? onClose : undefined}>
       <div className="modal" data-size={size} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <div className="modal-title">{title}</div>
@@ -51,7 +46,6 @@ export function Modal({
         <div className="modal-body">{children}</div>
         {footer ? <div className="modal-foot">{footer}</div> : null}
       </div>
-    </div>,
-    document.body
+    </Overlay>
   )
 }

@@ -2911,12 +2911,50 @@ select.input option[data-separator] {
 
 /* ── 弹层 ─────────────────────────────────────────────────────────────── */
 
+/*
+ * 弹层是**三层兄弟**，不是父子：
+ *
+ *   .overlay        只负责「面板摆在哪儿」—— 自己不画一个像素
+ *     .overlay-mask 遮罩：底色 + 背景模糊（独立一层，见 components/Overlay.tsx）
+ *     .modal        面板：自带 box-shadow
+ *
+ * ★ 为什么遮罩不能当面板的父级：`backdrop-filter` / `opacity` / `transform` 只要落在面板的
+ *   **祖先**上，那个祖先就成了一道「背景根」（backdrop root），面板的 backdrop-filter 从此
+ *   只糊得到祖先自己画的那一块，糊不到底下真实的页面。而遮罩天生要带 `backdrop-filter` 与
+ *   淡入动画（= 一段 `opacity`），面板套在它里面就必然会「淡入一结束，玻璃突然变样」。
+ *   拆成兄弟之后，面板背后直接是页面，动画期间也不会有这一跳。
+ * ★ 为什么遮罩与面板只差一个 z-index 而不是各占一个层叠上下文：两者都在 .overlay 这一个
+ *   上下文里，遮罩 0、面板 1 —— 面板那一整块绘制（**含它框外的投影**）整个压在遮罩之上，
+ *   于是「阴影完整压在遮罩上、又不会被遮罩的底色盖掉」是**结构保证**，不依赖谁先被绘制。
+ * ★ .overlay 自己**不许**带 overflow / opacity / transform / background：前三个会裁掉或
+ *   改变面板投在外面的阴影，最后一个会让阴影在深色桌面上变成一块被盖住的灰。它只是个网格盒。
+ */
 .overlay {
   position: fixed;
-  inset: 0;
+  /*
+   * 让开窗口边缘那一圈（= #root 的内边距，令牌见 base.css 的 --win-inset）。
+   * ★ 那圈里画的是**窗口**阴影：遮罩若铺到窗口边缘，整圈阴影会被一层 50% 的黑盖掉 ——
+   *   表现就是「一开弹窗，窗口四边变成一条黑边、投影消失」。
+   * ★ 最大化 / 全屏时这个令牌是 0，遮罩跟着铺满，不会在四周留一圈没压暗的缝。
+   */
+  inset: var(--win-inset);
   z-index: 100;
   display: grid;
   place-items: center;
+  /* 面板离可见面留一口气：贴着窗口边缘时，面板自己的投影会伸出窗口被系统裁掉 */
+  padding: 24px;
+}
+
+/*
+ * 蒙版：只画自己那一层。
+ * ★ 淡入放在**它自己**身上（不放 .overlay 上）：见上面那段「背景根」的说明。
+ * ★ 它不参与面板的定位：absolute + inset 0 撑满整层（含 .overlay 的 padding），
+ *   所以「点空白处关闭」的命中范围就是整块可见面，不用另算尺寸。
+ */
+.overlay-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(4px);
   animation: fade-in var(--dur-2) var(--ease);
@@ -2928,9 +2966,24 @@ select.input option[data-separator] {
   }
 }
 
+/* 靠上：命令面板那种「从顶上掉下来」的观感 */
+.overlay[data-align='top'] {
+  place-items: start center;
+}
+
+/*
+ * 面板。
+ * ★ position + z-index 1 是必需的：遮罩是 absolute（在定位元素那一档里），面板若还是
+ *   默认的 static，就会被遮罩盖住 —— 连带框外的阴影一起被盖掉。
+ * ★ 尺寸按**这一层的内容盒**算（100%），不是按 100vw：可见面比窗口小一圈（--win-inset），
+ *   用 vw 算出来的宽度在窄窗口里会顶出可见面。max-height 同理，跟着层高走，
+ *   于是窗口高矮、最大化与否、面板内容长短都不会让它顶到边界或溢出。
+ */
 .modal {
-  width: min(520px, calc(100vw - 80px));
-  max-height: calc(100vh - 120px);
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  max-height: 100%;
   overflow: auto;
   border-radius: var(--r-lg);
   border: 1px solid var(--line-2);
@@ -2941,7 +2994,7 @@ select.input option[data-separator] {
 }
 
 .modal[data-size='wide'] {
-  width: min(760px, calc(100vw - 80px));
+  width: min(760px, 100%);
 }
 
 @keyframes pop-in {
@@ -3295,8 +3348,15 @@ html[data-mini='true'] .toasts {
 
 /* ── 命令面板 ─────────────────────────────────────────────────────────── */
 
+/*
+ * 与 .modal 同一套骨架（.overlay → .overlay-mask → 面板，见上面「弹层」那一段）。
+ * ★ position + z-index 1：同上，否则会被遮罩盖住（连阴影一起）。
+ * ★ 宽度按层的内容盒算，不对着 100vw —— 可见面比窗口小一圈，见 .modal 那段说明。
+ */
 .palette {
-  width: min(620px, calc(100vw - 80px));
+  position: relative;
+  z-index: 1;
+  width: min(620px, 100%);
   align-self: start;
   margin-top: 12vh;
   border-radius: var(--r-lg);
@@ -3306,10 +3366,6 @@ html[data-mini='true'] .toasts {
   box-shadow: var(--shadow-3);
   overflow: hidden;
   animation: pop-in var(--dur-2) var(--ease);
-}
-
-.overlay[data-align='top'] {
-  place-items: start center;
 }
 
 .palette-input {

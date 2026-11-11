@@ -28,9 +28,17 @@ body,
  *   阴影跟着内容走，而不是跟着那块撑满整窗的容器走）。
  * ★ 最大化 / 全屏时收成 0：那时窗口铺满屏幕，留着边距反而会在四周露出一圈桌面。
  *   （迷你窗没有这两种状态 —— 它的 min/max 尺寸被主进程钉死，见 main/mini-window.ts。）
+ *
+ * ★ 缩进量单独一个令牌 `--win-inset`，且挂在 <html> 上：弹层（.overlay）是 portal 到
+ *   body 的（见 components/Overlay.tsx），遮罩也要照着这一圈让开，否则它会把窗口阴影
+ *   整圈盖成一块墨。两处都读同一个令牌，最大化时一起收成 0，不会一边铺满一边还缩着。
  */
+html {
+  --win-inset: var(--win-edge);
+}
+
 #root {
-  padding: var(--win-edge);
+  padding: var(--win-inset);
 }
 
 /*
@@ -167,10 +175,12 @@ a {
 }
 
 /* 最大化 / 全屏：不留边距、不画阴影（那时的边框就是屏幕边缘，见 #root 那一段）。
+   ★ 收的是**令牌**而不是某一处的内边距：#root 的 padding 与弹层的 inset 都读它，
+     改一处两处一起收；写成 `#root { padding: 0 }` 只会收掉前者，弹窗一开就在四周留一圈缝。
    ★ 属性用**存在性**判定（App.tsx 那边走 toggleAttribute，值是空串），别写成 ='true'。 */
-html[data-maximized] #root,
-html[data-fullscreen] #root {
-  padding: 0;
+html[data-maximized],
+html[data-fullscreen] {
+  --win-inset: 0px;
 }
 
 html[data-maximized] .shell,

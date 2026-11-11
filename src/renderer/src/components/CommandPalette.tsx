@@ -32,6 +32,7 @@ import {
   IconVolume,
   IconVolumeX
 } from './Icons'
+import { Overlay } from './Overlay'
 import { Cover } from './primitives'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
 import { getSongs } from '@/api/endpoints'
@@ -321,11 +322,7 @@ export function CommandPalette(): React.JSX.Element | null {
   let lastGroup = ''
 
   return (
-    <div
-      className="overlay"
-      data-align="top"
-      onPointerDown={(event) => event.target === event.currentTarget && close()}
-    >
+    <Overlay align="top" onDismiss={close}>
       <div className="palette" role="dialog" aria-modal="true" aria-label="命令面板">
         <div className="row" style={{ paddingRight: 12 }}>
           <IconCommand size={17} style={{ marginLeft: 16, color: 'var(--text-4)', flex: 'none' }} />
@@ -396,6 +393,6 @@ export function CommandPalette(): React.JSX.Element | null {
           <span>{entries.length} 项</span>
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }
