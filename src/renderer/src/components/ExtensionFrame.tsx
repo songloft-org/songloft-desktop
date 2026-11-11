@@ -1,12 +1,16 @@
 /**
  * 扩展主框架 —— 标题栏以下的那一整块，左右分栏。
  *
- *   ┌ 扩展侧栏（固定两条入口 + 已安装扩展 + 收起）│ 内容面 ┐
- *   └──────────────────────────────────────────────┴────────┘
+ *   ┌ 扩展侧栏（插件管理 + 已安装扩展 + 收起）│ 内容面 ┐
+ *   └─────────────────────────────────────────────┴────────┘
  *
- * ★ 它**同时**承载「插件商店 / 插件管理」与「某个扩展的 webview」两种内容，
+ * ★ 它**同时**承载「插件管理 / 插件商店」与「某个扩展的 webview」两种内容，
  *   两者只在右侧那一栏里换。标题栏上的「扩展」入口因此是一个**去处**（一个工作台），
  *   而不是一排并排的页签 —— 装、管、用三件事在同一处，不必来回切界面。
+ *
+ * ★ 侧栏只有**一条**固定入口（插件管理）：插件商店是它下面的一层 —— 从插件管理页
+ *   右上角那颗按钮进去，回来走侧栏里这一条（商店那一栏也亮着它，因为商店属于这一节）。
+ *   原先两条并排摆着，等于让人先在「逛」和「管」之间做一次没有必要的选择。
  *
  * ★ PluginSurface **一直挂着**（哪怕当前显示的是插件商店），否则「正在出声的那个扩展」
  *   会在用户点一下「插件管理」时被销毁 —— 声音直接断。PluginSurface 自己的不变量就是
@@ -23,7 +27,7 @@
  */
 
 import { pluginDisplayName, type JSPlugin } from '@shared/plugin'
-import { IconChevronLeft, IconChevronRight, IconMusic, IconSliders, IconStore } from './Icons'
+import { IconChevronLeft, IconChevronRight, IconMusic, IconSliders } from './Icons'
 import { openMenuFromEvent } from './ContextMenu'
 import { PluginIcon } from './PluginIcon'
 import { PluginSurface } from './PluginSurface'
@@ -98,23 +102,15 @@ function ExtensionSidebar({
 
   return (
     <nav className="sidebar ext-sidebar" data-collapsed={collapsed} aria-label="扩展导航">
-      {/* 两条固定入口。顺序照「先逛后管」：装东西的意愿比改配置更常见 */}
+      {/*
+        唯一的固定入口。插件商店不再与它并排（见文件头那段）：它是这一节下面的一层，
+        所以商店那一栏也亮着这一条 —— 它属于「插件管理」这一节，而不是「什么都没选中」。
+      */}
       <div className="nav-group">
         <button
           type="button"
           className="nav-item"
-          aria-current={pane === 'store' ? true : undefined}
-          onClick={() => navigate({ name: 'extensions', pane: 'store' })}
-          {...tip('插件商店')}
-        >
-          <IconStore size={18} />
-          <span className="nav-text">插件商店</span>
-        </button>
-
-        <button
-          type="button"
-          className="nav-item"
-          aria-current={pane === 'manage' ? true : undefined}
+          aria-current={pane !== null ? true : undefined}
           onClick={() => navigate({ name: 'extensions', pane: 'manage' })}
           {...tip('插件管理')}
         >
@@ -133,7 +129,7 @@ function ExtensionSidebar({
             <div className="nav-empty">
               还没有装扩展
               <br />
-              去插件商店看看
+              右上角「插件商店」里能装
             </div>
           ) : null}
 

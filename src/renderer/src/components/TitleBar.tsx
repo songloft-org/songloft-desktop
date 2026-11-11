@@ -44,8 +44,7 @@ import {
   IconRestore,
   IconSearch,
   IconSettings,
-  IconSliders,
-  IconStore
+  IconSliders
 } from './Icons'
 import { openMenuFromEvent, useContextMenu, type MenuItem } from './ContextMenu'
 import { PluginIcon } from './PluginIcon'
@@ -244,10 +243,10 @@ export function TitleBar({ solo = false }: TitleBarProps): React.JSX.Element {
   }
 
   /**
-   * 扩展下拉的内容：**两条固定入口 → 分割线 → 已开启的扩展**。
+   * 扩展下拉的内容：**插件管理 → 分割线 → 已开启的扩展**。
    *
-   * * 「插件商店 / 插件管理」与扩展侧栏顶部那两条是同一组去处，图标也用同一对
-   *   （IconStore / IconSliders），两处不会被认成两回事。
+   * * 「插件商店」不在这份菜单里（也没有自己的侧栏入口）：它是插件管理页下面的一层，
+   *   入口就是那一页右上角那颗按钮。菜单只留**最常去的那个去处**，其余沿着页面里的路走。
    * * 已开启的扩展**不带二级菜单**：这一份菜单的用途是**快速跳转**，再挂一层
    *   「静音 / 停用 / 卸载」等于把管理动作藏进悬浮里。要管扩展请走「插件管理」那一栏 ——
    *   那儿有整行位置摆开关与按钮；「静音」也仍在扩展侧栏的右键菜单里。
@@ -259,18 +258,12 @@ export function TitleBar({ solo = false }: TitleBarProps): React.JSX.Element {
    */
   const extensionMenuItems: MenuItem[] = [
     {
-      key: 'extensions-store',
-      label: '插件商店',
-      icon: <IconStore size={16} />,
-      onClick: () => navigate({ name: 'extensions', pane: 'store' })
-    },
-    {
       key: 'extensions-manage',
       label: '插件管理',
       icon: <IconSliders size={16} />,
       onClick: () => navigate({ name: 'extensions', pane: 'manage' })
     },
-    // 两条固定入口与「已开启的扩展」不是一类：分割线把它们划开
+    // 固定入口与「已开启的扩展」不是一类：分割线把它们划开
     { key: 'sep-extensions', label: '', separator: true },
     ...(extensions.length
       ? extensions.map((plugin) => {

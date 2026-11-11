@@ -27,7 +27,13 @@ export type SettingsSection =
 /** 标题栏以下那一整块显示哪一面 */
 export type Surface = 'native' | 'extensions'
 
-/** 扩展主框架里的两条固定入口 */
+/**
+ * 扩展主框架右侧内容面的两种固定内容。
+ *
+ * ★ 侧栏里只有「插件管理」那一条入口：`store`（插件商店）是它下面的一层 ——
+ *   从插件管理页右上角那颗按钮进去。两个 pane 都算「插件管理这一节」，
+ *   所以侧栏那条入口在两者下都亮着（见 ExtensionFrame）。
+ */
 export type ExtensionPane = 'store' | 'manage'
 
 /** 扩展那一面的路由：框架右侧内容面显示什么 */
@@ -160,7 +166,8 @@ const sameRoute = (a: Route, b: Route): boolean => JSON.stringify(a) === JSON.st
 export const useUi = create<UiState>((set, get) => ({
   surface: 'native',
   nativeRoute: { name: 'home' },
-  extensionRoute: { name: 'extensions', pane: 'store' },
+  // 初始落在插件管理：商店是它下面的一层，进框架先看到的是「装了什么、怎么管」
+  extensionRoute: { name: 'extensions', pane: 'manage' },
   history: [],
   panelOpen: false,
   panelTab: 'now-playing',
@@ -177,7 +184,7 @@ export const useUi = create<UiState>((set, get) => ({
     const state = get()
 
     if (isExtensionRoute(route)) {
-      // 同一条路由重复点（比如连点侧栏的「插件商店」）不该白跑一趟
+      // 同一条路由重复点（比如连点侧栏的「插件管理」）不该白跑一趟
       if (state.surface === 'extensions' && sameRoute(state.extensionRoute, route)) return
       set({ surface: 'extensions', extensionRoute: route, selection: [], selectionAnchor: null })
       return

@@ -1,8 +1,9 @@
 /**
  * 插件管理 —— 扩展主框架右侧的一栏（框架与左栏见 components/ExtensionFrame.tsx）。
  *
- * 只列**已经装上的**：「还能装的」在同框架的插件商店那一栏里。装是「逛」、这是「改配置」，
- * 两种节奏各有各的一栏，而不是并排挤在同一屏里互相争宽度。
+ * 只列**已经装上的**：「还能装的」在插件商店里 —— 它是这一页下面的一层，由页头右上角
+ * 那颗「插件商店」按钮进去（侧栏与标题栏都不再单独给商店一个入口）。装是「逛」、这是
+ * 「改配置」，两种节奏各有各的一栏，而不是并排挤在同一屏里互相争宽度。
  *
  * 列表顺序就是扩展侧栏里那份顺序 —— 同一个 `order`，同一个 applyPluginOrder。
  * 两处各存一份的话，「拖完没反应」或「侧栏顺序自己变了」会随机出现。
@@ -42,6 +43,7 @@ import {
   IconPuzzle,
   IconRefresh,
   IconSliders,
+  IconStore,
   IconTrash,
   IconUpload
 } from '@/components/Icons'
@@ -290,6 +292,23 @@ export function ExtensionsPage(): React.JSX.Element {
               : '正在读取…'}
           </p>
         </div>
+
+        {/*
+          插件商店的**唯一**入口（侧栏与标题栏下拉里都收掉了，见 ExtensionFrame / TitleBar）。
+          放在页头右上角：它与「管理订阅源 / 刷新商店」在商店页头里的位置对称 ——
+          一进一出都在同一个角上，来回切不必重新找一次按钮。
+        */}
+        <div className="row">
+          <button
+            type="button"
+            className="btn"
+            data-size="sm"
+            onClick={() => navigate({ name: 'extensions', pane: 'store' })}
+          >
+            <IconStore size={14} />
+            插件商店
+          </button>
+        </div>
       </div>
 
       {/*
@@ -407,7 +426,7 @@ export function ExtensionsPage(): React.JSX.Element {
         <EmptyState
           icon={<IconPuzzle size={26} />}
           title="还没有安装扩展"
-          description="左侧「插件商店」里能直接装；也可以装本地打包好的 .jsplugin.zip。"
+          description="右上角「插件商店」里能直接装；也可以装本地打包好的 .jsplugin.zip。"
         />
       ) : null}
 

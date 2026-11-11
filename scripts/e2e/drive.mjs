@@ -105,6 +105,23 @@ const containsAll = (...names) =>
   )
 
 /**
+ * 「这些词一个都不许出现」：取值口径与 containsAll 完全一致（数组 / 整段字符串）。
+ *
+ * 用于验证「某个入口确实被收掉了」——侧栏、菜单这类列表里少一项，只在截图里看不出来：
+ * 多一个少一个都长得挺正常。
+ */
+const excludes = (...names) =>
+  Object.assign(
+    (v) => {
+      const haystack = Array.isArray(v) ? v.map(String) : [String(v ?? '')]
+      return names.every((n) => haystack.every((x) => !x.includes(n)))
+    },
+    {
+      label: `不含[${names.join('+')}]`
+    }
+  )
+
+/**
  * 注入到渲染层的助手。
  *
  * ⚠️ 这段是**模板字符串**：注释里出现反引号会把它提前闭合，症状是 Node 抛
@@ -585,7 +602,7 @@ window.__t = {
     menuNotes: vis('.context-menu .menu-sub').map((e) => (e.textContent || '').trim()),
     /** 当前在哪一面（native / extensions）。标题栏两颗拆分按钮的走位全靠它 */
     surface: (document.querySelector('.shell') || {}).dataset?.surface ?? '',
-    /** 扩展侧栏的入口（前两条固定是插件商店 / 插件管理，之后是已开启的扩展） */
+    /** 扩展侧栏的入口（固定只有插件管理一条，之后是已开启的扩展；商店已不再单列） */
     extNavs: vis('.ext-sidebar .nav-item').map((e) => (e.textContent || '').trim()),
     /** 插件管理列表：只取名字那一段（版本号是紧跟其后的 .badge，不属于名字） */
     extNames: vis('.extension-row .extension-name .truncate').map((e) =>
@@ -1245,20 +1262,39 @@ const STEPS = [
   /*
    * ── 扩展面（原生面之外的另一整面）──────────────────────────────────────
    * 标题栏那颗「扩展」按钮的主点击是 `showSurface('extensions')`：只换面、不动路由，
-   * 所以它落回**上次在的那一栏** —— 初始那一栏是「插件商店」。
+   * 所以它落回**上次在的那一栏** —— 初始那一栏是「插件管理」（插件商店是它下面的一层，
+   * 侧栏与下拉里都不再单独给入口，见下一段）。
    *
-   * 三条断言各挡一类静默失败：面有没有真的换过去；商店列表有没有读到
-   * （骨架屏 / 错误态的结构跟正常态不同，但只数卡片个数的话「四张空卡」也过得去）；
-   * 以及四档动作文字（未装 / 可更新 / 已装最新 / 入口撞名是按条目状态推出来的，
-   * 写死成一档就会在这里红）。
+   * 三条断言各挡一类静默失败：面有没有真的换过去；扩展侧栏里那条固定入口还在、
+   * 商店那一条**确实收掉了**；以及列表顺序、版本角标与常驻态 —— 它们分别来自列表接口、
+   * 设置与 status，任何一处写死都会在这里红。
    */
   [
-    '43-extensions-store',
+    '43-extensions-manage',
     "window.__t.clickLabel('扩展')",
     2600,
     {
       surface: exactly('extensions'),
-      extNavs: containsAll('插件商店', '插件管理'),
+      extNavs: excludes('插件商店'),
+      pageTitle: exactly('插件管理'),
+      pageSubtitle: containsAll('3 个已安装', '1 个启用中'),
+      extNames: equals('电台时光机', '歌词补全', '豆瓣标签'),
+      extBadges: containsAll('v2.0.1', 'v1.2.0', 'v0.9.3', '运行异常'),
+      extPinned: exactly(1)
+    }
+  ],
+  /*
+   * 插件商店：唯一的入口是插件管理页右上角那颗按钮。三条断言挡的分别是：
+   * 商店列表有没有读到（骨架屏 / 错误态的结构跟正常态不同，但只数卡片个数的话
+   * 「四张空卡」也过得去）、四档动作文字（未装 / 可更新 / 已装最新 / 入口撞名是按
+   * 条目状态推出来的，写死成一档就会在这里红）、以及来源下拉的当前范围。
+   */
+  [
+    '43b-extensions-store',
+    "window.__t.click('.page-header .btn', '插件商店')",
+    2600,
+    {
+      pageTitle: exactly('插件商店'),
       storeNames: containsAll('封面墙', '歌词补全', '豆瓣标签', '专辑墙'),
       storeActions: containsAll('安装', '更新至 v1.3.0', 'v0.9.3', '覆盖安装'),
       storeSourceTrigger: exactly('全部订阅源')
@@ -1274,7 +1310,7 @@ const STEPS = [
    *   · 面板本身（menus = 1 / 0）：触发器点了没反应的话，上面那条断言会空过。
    */
   [
-    '43b-store-source-menu',
+    '43c-store-source-menu',
     'window.__t.click(\'button[aria-label="筛选订阅源"]\')',
     700,
     {
@@ -1283,7 +1319,7 @@ const STEPS = [
       menuDividers: exactly(0)
     }
   ],
-  ['43c-store-source-menu-closed', "window.__t.key('Escape')", 600, { menus: exactly(0) }],
+  ['43d-store-source-menu-closed', "window.__t.key('Escape')", 600, { menus: exactly(0) }],
   /*
    * 订阅源管理弹窗：两块内容，断言也分开。
    *
@@ -1317,22 +1353,17 @@ const STEPS = [
     { modals: exactly(0) }
   ],
   /*
-   * 插件管理：列表顺序 = 持久化的 `plugin-order`，而 mock 里那一份**故意**与列表接口
-   * 给的顺序不同 —— 所以这里的 equals 是「顺序真的按 entryPath 排过」的唯一判据。
-   * 角标同时验两件事：版本号渲染出来了（不是兜底的「—」），以及 error 状态确实挂上了
-   * 「运行异常」（那是前端按 status 推出来的，不是后端给的文案）。
-   * extPinned=1 是常驻白名单那一份（行尾那块图钉的按下态）。
+   * 原路返回插件管理：商店页头右上角那颗（扩展侧栏被设成「隐藏」时这是唯一的退路，
+   * 所以它不能只靠侧栏那一条）。断言列表原样回来 —— 只验标题的话，
+   * 「退回去了但列表是空的」也能过。
    */
   [
-    '46-extensions-manage',
-    "window.__t.click('.ext-sidebar .nav-item', '插件管理')",
+    '46-extensions-manage-back',
+    "window.__t.click('.page-header .btn', '插件管理')",
     2200,
     {
       pageTitle: exactly('插件管理'),
-      pageSubtitle: containsAll('3 个已安装', '1 个启用中'),
-      extNames: equals('电台时光机', '歌词补全', '豆瓣标签'),
-      extBadges: containsAll('v2.0.1', 'v1.2.0', 'v0.9.3', '运行异常'),
-      extPinned: exactly(1)
+      extNames: equals('电台时光机', '歌词补全', '豆瓣标签')
     }
   ],
   /*

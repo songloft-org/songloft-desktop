@@ -1,6 +1,10 @@
 /**
  * 插件商店 —— 扩展主框架右侧的一栏（框架与左栏见 components/ExtensionFrame.tsx）。
  *
+ * ★ 它是**插件管理页下面的一层**：侧栏与标题栏下拉里都没有商店的入口，进来只有一个口子
+ *   （插件管理页右上角那颗按钮），页头右上角那颗「插件管理」就是原路返回。所以即使
+ *   扩展侧栏被设成「隐藏」，这一页也退得回去 —— 不能只靠侧栏那条入口。
+ *
  * **两份来源共用这一页**，由搜索框旁边那个下拉切换：
  *   * 订阅源（后端聚合，`POST /jsplugins/registry/refresh`）—— 默认的那一份；
  *   * **GitHub 发现**（`GITHUB_DISCOVERY`）—— 按 topic 搜 GitHub 上的社区插件，
@@ -58,6 +62,7 @@ import { GithubDiscoveryCard } from '@/components/GithubDiscoveryCard'
 import { GithubTokenDialog } from '@/components/GithubTokenDialog'
 import {
   IconAlert,
+  IconChevronLeft,
   IconCloud,
   IconDownload,
   IconLoader,
@@ -75,6 +80,7 @@ import { resourceContext, useAuth } from '@/state/useAuth'
 import { usePlugins } from '@/state/usePlugins'
 import { useSettings } from '@/state/useSettings'
 import { toast } from '@/state/useToasts'
+import { useUi } from '@/state/useUi'
 
 /** 一页拉多少。太小翻页频繁，太大一次请求拿回一堆用不上的 manifest */
 const PAGE_SIZE = 20
@@ -122,6 +128,8 @@ interface InstallTarget {
 
 export function PluginStore(): React.JSX.Element {
   const client = useAuth((state) => state.client)
+  /** 原路返回插件管理（见文件头：扩展侧栏收起时这是唯一的退路） */
+  const navigate = useUi((state) => state.navigate)
 
   const [input, setInput] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -686,7 +694,22 @@ export function PluginStore(): React.JSX.Element {
 
         <div className="row">
           {/*
-            右上角**不随来源换一套按钮**：选中「GitHub 发现」只是把范围收窄，不是进另一个页面，
+            返回插件管理。★ 它排在最前：这一页是「从那一页进来」的一层，退路要在熟悉的那个
+            角上（插件管理页右上角同样位置是进来那颗钮）。侧栏里插件管理那一条也能退，
+            但侧栏可以被设成「隐藏」—— 那时它就是唯一的路。
+          */}
+          <button
+            type="button"
+            className="btn"
+            data-size="sm"
+            onClick={() => navigate({ name: 'extensions', pane: 'manage' })}
+          >
+            <IconChevronLeft size={14} />
+            插件管理
+          </button>
+
+          {/*
+            下面两颗**不随来源换一套**：选中「GitHub 发现」只是把范围收窄，不是进另一个页面，
             为了它多长出一颗「GitHub Token」、或者把「刷新商店」改叫「刷新」，都会让每切一次源
             按钮就跟着挪一次。所以两颗按钮的字面与顺序在所有来源下都是同一套，
             只有「刷新实际上重取哪一半」按来源走。
