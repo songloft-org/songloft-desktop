@@ -13,15 +13,31 @@
  *
  * ★ 这里只管「把一条 m3u8 变成能出声的流」，不管换源、不管文案。失败按**种类**交给调用方
  *   （state/player-core），由它决定是重试 HLS 还是回落到服务端转码（`radio_transcode=mp3`）。
+ *
+ * ★ **没有 CORS 的源**（视频源尤其常见）由主进程代取，见 `relay` 选项与 shared/hls-relay：
+ *   这里只是在 loadSource 之前把地址换成中继地址，其余一切照旧（loader / 失败分类都不变）。
  */
 
 import type Hls from 'hls.js'
 import type { ErrorData } from 'hls.js'
 
+import { relayUrlFor } from '@shared/hls-relay'
+
 /** 失败的种类：调用方据此决定说什么话（跨域是唯一「有明确解法」的那一种） */
 export type HlsFailure = 'cors' | 'network' | 'media'
 
 export type HlsFatalHandler = (failure: HlsFailure, detail: string) => void
+
+export interface HlsLoadOptions {
+  /**
+   * 走主进程中继（`songloft-hls://`，见 shared/hls-relay）。
+   *
+   * ★ 什么时候该开：源站没有 CORS 头，或者我们根本不知道它有没有 —— 视频源属于后者
+   *   （后端 `?media=video` 一律 302 到源站，最终响应头由源站说了算），外链电台也是。
+   *   后端自己的地址（`/songs/{id}/play…`）**不开**：那份响应本来就带着放行头，直连更短。
+   */
+  relay?: boolean
+}
 
 /**
  * 这条地址是不是 HLS 播放列表。
@@ -67,11 +83,15 @@ function classify(data: ErrorData): HlsFailure {
  *
  * ★ 不把「取不到」一律说成跨域：status 0 也包含 DNS 失败 / 连接被拒（hls.js 在浏览器侧
  *   本来就分不出这两者）。这里给出**唯一有解法的那个动作**，同时保留「网络不通」的可能。
+ * ★ 走中继时不提那个开关：中继已经在主进程代取了，跨域这一层根本不存在，剩下的可能只有
+ *   「源站自己不通 / 拒绝这台机器」—— 再让用户去服务器上开一个对视频无效的开关，是误导。
  */
-function describe(failure: HlsFailure): string {
+function describe(failure: HlsFailure, relay: boolean): string {
   switch (failure) {
     case 'cors':
-      return '跨域受限或网络不通，可开启服务端「HLS 代理」'
+      return relay
+        ? '取不到媒体流（网络不通或源站拒绝）'
+        : '跨域受限或网络不通，可开启服务端「HLS 代理」'
     case 'media':
       return '音频无法解码'
     default:
@@ -106,9 +126,15 @@ class HlsChannel {
    */
   // 参数是 HTMLMediaElement 而不是 HTMLAudioElement：视频电台要挂到 `<video>` 上
   // （见 state/player-core 那颗媒体元素）。hls.js 的 attachMedia 本来就只认这个父类型。
-  async load(audio: HTMLMediaElement, url: string, onFatal: HlsFatalHandler): Promise<boolean> {
+  async load(
+    audio: HTMLMediaElement,
+    url: string,
+    onFatal: HlsFatalHandler,
+    options: HlsLoadOptions = {}
+  ): Promise<boolean> {
     this.stop()
     if (!supportsHls()) return false
+    const relay = options.relay === true
 
     const generation = ++this.generation
     let HlsCtor: typeof Hls
@@ -146,12 +172,13 @@ class HlsChannel {
       if (this.hls !== hls) return
       const failure = classify(data)
       this.stop()
-      onFatal(failure, describe(failure))
+      onFatal(failure, describe(failure, relay))
     })
 
     this.hls = hls
     hls.attachMedia(audio)
-    hls.loadSource(url)
+    // 中继只换「第一条地址」：主进程会把列表里每条 URI 都改写成中继地址（见 shared/hls-relay）
+    hls.loadSource(relay ? relayUrlFor(url) : url)
     return true
   }
 

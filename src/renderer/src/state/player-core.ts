@@ -42,6 +42,8 @@
  *     第一次        → hls.js 自己解（不占服务端 CPU、音质原样）
  *     之后每一次    → 服务端转 mp3（只要能转就一定能放）
  *   环境没有 MSE 时第一次就直接走服务端，不白下载那几百 KB 的 hls.js。
+ * ★ 视频 HLS 与外链 HLS 再额外走一层**主进程中继**（见 startSong 的 relayHls）：源站没有
+ *   CORS 头时，hls.js 在渲染层一个字节也读不到，而主进程不受这一层限制。
  *
  * ★ **预热下一首**（见 state/song-prefetch）：起播成功后请后端把队列里的下一首提前解析 +
  *   下载 + 转码，下一次点播直接命中缓存。这与上面的重试是两件事：一个治「等太久」，一个
@@ -619,17 +621,29 @@ export const playerCore = create<PlayerState>((set, get) => {
    * ★ 这里是**唯一**写 `audio.src` / `expectedSrc` 的地方（另一处是恢复上次队列时的预载，
    *   它只为普通歌曲服务，见 restoreLastQueue）：HLS 模式下 `audio.src` 归 hls.js 管，
    *   两边各写一遍必然会互相覆盖。
+   *
+   * `relay` = 这条 m3u8 交给主进程代取（源站没有 CORS 时唯一的活路，见 shared/hls-relay）。
    */
-  async function applySource(song: Song, url: string, asHls: boolean): Promise<void> {
+  async function applySource(
+    song: Song,
+    url: string,
+    asHls: boolean,
+    relay = false
+  ): Promise<void> {
     // 见 switchingSource：这一小段里浏览器补的 pause 事件不该把加载提示收掉
     switchingSource = true
     try {
       if (asHls) {
-        const taken = await hlsChannel.load(audio, url, (_failure, detail) => {
-          // 迟到的失败（用户已经切歌）：不该算到新歌头上
-          if (get().currentSong()?.id !== song.id) return
-          handlePlaybackFailure(song, detail)
-        })
+        const taken = await hlsChannel.load(
+          audio,
+          url,
+          (_failure, detail) => {
+            // 迟到的失败（用户已经切歌）：不该算到新歌头上
+            if (get().currentSong()?.id !== song.id) return
+            handlePlaybackFailure(song, detail)
+          },
+          { relay }
+        )
         if (taken) {
           /*
            * HLS 模式下 audio.src 是 MSE 给的 blob:，与逻辑地址比不出东西 —— 清空「期望地址」，
@@ -733,6 +747,16 @@ export const playerCore = create<PlayerState>((set, get) => {
      */
     const radioTranscode =
       hlsSong && servedByBackend && !song.is_video && (!supportsHls() || attempt > 0)
+    /*
+     * ★ 这条 m3u8 要不要**交给主进程代取**（见 shared/hls-relay）：两种源必要：
+     *   · **视频** —— 后端 `?media=video` 对电台/外链是 302 到源站，最终那份播放列表的
+     *     响应头由源站说了算；源站不给 CORS 时 hls.js 一个字节也读不到，而 `<video src>`
+     *     不受这一层限制（这也解释了「mp4 视频一直正常、只有 HLS 坏」）。
+     *   · **外链 HLS** —— 后端根本不参与转发，直连只能撞跨域；中继还能顺手带上本机的网络
+     *     通路（与渲染层同一个会话），两种运行方式下行为一致。
+     * 后端自己的地址（`/songs/{id}/play…`）**不走**：那份响应本来就带放行头，直连更短。
+     */
+    const relayHls = hlsSong && (song.is_video || !servedByBackend)
     const url = buildSongUrl(song, resourceContext(), {
       // 视频只带 media=video：其它参数都会让后端走 `-vn` 转码，画面就没了（见 lib/url）
       mediaVideo: song.is_video,
@@ -771,7 +795,7 @@ export const playerCore = create<PlayerState>((set, get) => {
     })
     // 在途的那一次加载（HLS 要先动态 import）从这一刻起作废
     const token = ++loadToken
-    await applySource(song, url, hlsSong && !radioTranscode)
+    await applySource(song, url, hlsSong && !radioTranscode, relayHls)
     // await 期间用户切了歌 / 清了队列：这一趟不该再往 audio 上挂任何东西
     if (token !== loadToken) return
     loadedSongId = song.id

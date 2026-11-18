@@ -15,6 +15,7 @@ import { Readable } from 'node:stream'
 
 import { protocol } from 'electron'
 
+import { HLS_RELAY_SCHEME } from '@shared/hls-relay'
 import {
   LOCAL_FILE_SCHEME,
   audioMimeFor,
@@ -23,7 +24,11 @@ import {
 } from '@shared/local-file'
 
 /**
- * 把协议登记为特权协议。**必须赶在 app ready 之前调用**（Chromium 只在启动时读这份声明）。
+ * 把本应用的两条自定义协议登记为特权协议。
+ *
+ * ★ 这一句必须赶在 app ready 之前调用（Chromium 只在启动时读这份声明），而且
+ *   `registerSchemesAsPrivileged` **整个进程只能调用一次** —— 所以两条协议在同一份声明里
+ *   一起给出，别在别的模块里再调一次（第二次会被忽略，症状是那条协议静默失灵）。
  *
  * 三项特权各自对应一件不做就不成立的事：
  *   * `standard`    —— 按标准 URL 解析（scheme://host/path）。不写它拿到的是一整串不透明
@@ -33,11 +38,23 @@ import {
  *   * `stream`      —— ★ 最关键的一项：不加它 Chromium 会**把整份响应缓冲完**才交给
  *                      `<audio>`。一首 60MB 的 FLAC 于是要等它整个读完才出声，拖动进度条
  *                      更是无从谈起。
+ *   * `supportFetchAPI` / `corsEnabled` —— hls.js 的中继地址是用 XHR 取的（见
+ *                      main/hls-relay.ts），少了这两项它连请求都发不出去。
  */
-export function registerLocalFileScheme(): void {
+export function registerMediaSchemes(): void {
   protocol.registerSchemesAsPrivileged([
     {
       scheme: LOCAL_FILE_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true,
+        corsEnabled: true
+      }
+    },
+    {
+      scheme: HLS_RELAY_SCHEME,
       privileges: {
         standard: true,
         secure: true,

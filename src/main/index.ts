@@ -46,7 +46,8 @@ import {
   setLocalFilesNotifier,
   takePendingPaths
 } from './local-files'
-import { registerLocalFileScheme, installLocalFileProtocol } from './media-protocol'
+import { installHlsRelayProtocol } from './hls-relay'
+import { registerMediaSchemes, installLocalFileProtocol } from './media-protocol'
 import { registerMediaKeys } from './media-keys'
 import {
   applyMiniWindowOnTop,
@@ -65,6 +66,7 @@ import {
 import { fetchCoverBytes, probeServer } from './probe'
 import { reconcileClientCache, reconcileFromRenderer } from './render-cache'
 import type { CastAction, CastRequest } from '@shared/dlna'
+import { HLS_RELAY_SCHEME } from '@shared/hls-relay'
 import { LOCAL_FILE_SCHEME } from '@shared/local-file'
 import { PLUGIN_PARTITION } from '@shared/plugin'
 import type { RenderCacheRequest } from '@shared/render-cache'
@@ -97,11 +99,12 @@ import { applyWindowOnTop, createMainWindow } from './windows'
 app.setDesktopName('io.github.edwinhuish.songloft-desktop')
 
 /*
- * 本地文件的播放地址走的自定义协议（见 media-protocol.ts）。★ 这一句必须越过 app ready
- * —— Chromium 只在启动那一刻读特权协议的声明，晚一步注册就会把它当成一个普通（不安全、
- * 且不能流式）的来源，媒体加载直接失败且几乎不给原因。
+ * 本应用的两条自定义协议：本地文件的播放地址（media-protocol.ts）与外链 HLS 的中继
+ * （hls-relay.ts）。★ 这一句必须越过 app ready —— Chromium 只在启动那一刻读特权协议的
+ * 声明，晚一步注册就会把它当成一个普通（不安全、且不能流式）的来源，媒体加载直接失败
+ * 且几乎不给原因。
  */
-registerLocalFileScheme()
+registerMediaSchemes()
 
 /**
  * 免安装（绿色）版该用的数据目录 —— 拿不到就返回 null。
@@ -278,7 +281,10 @@ function applyCsp(): void {
             // ★ 带上媒体协议：本地文件的播放地址走的是它（见 main/media-protocol.ts）。
             //   漏掉这一项时打包态下本地文件一首也放不出来，且 CSP 的拦截**只写在控制台**里。
             `media-src 'self' blob: http: https: ${LOCAL_FILE_SCHEME}:`,
-            "connect-src 'self' http: https: ws: wss:",
+            // ★ 中继协议走的是 connect-src（hls.js 用 XHR 取播放列表与切片，不是 <video> 直接
+            //   加载）。漏掉它时表现是「打包态下外链电台一律放不出来」，开发态却一切正常 ——
+            //   因为 CSP 只在打包态注入。
+            `connect-src 'self' http: https: ws: wss: ${HLS_RELAY_SCHEME}:`,
             "font-src 'self' data:",
             "object-src 'none'",
             "frame-src 'none'",
@@ -742,6 +748,8 @@ if (gotTheLock) {
     applyCsp()
     // 本地文件的播放地址由它来读（必须在页面开始请求之前装好）
     installLocalFileProtocol()
+    // 外链 HLS 的中继出口（没有 CORS 的源靠它，见 main/hls-relay.ts）
+    installHlsRelayProtocol()
     // 「又有本地文件要打开」送到**当宿主的那一个窗口**：渲染层收到后回来 takePendingPaths()
     setLocalFilesNotifier(() => sendToHost(IPC.onLocalFilesPending, null))
     // 必须早于任何 webview 挂载：它注册的 web-contents-created 只在创建时生效一次
