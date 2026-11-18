@@ -176,7 +176,8 @@ src/
    │                 ExtensionFrame（扩展主框架：左侧栏 + 右内容面）/
    │                 PluginSurface（扩展 webview 栈）/ PluginIcon /
    │                 RegistrySourcesDialog（管理订阅源）/
-   │                 GithubDiscoveryCard（发现页的卡片）/ GithubTokenDialog（发现页的凭据）
+   │                 GithubDiscoveryCard（发现页的卡片）/ GithubTokenDialog（发现页的凭据）/
+   │                 AddRadioDialog（曲库→电台 的「添加电台」表单：地址 / 标题 / 视频内容）
    ├─ hooks/         useSongList / usePlaylistSongs / useAsync / useResponsiveSidebar /
    │                 usePageActive（页面槽的「我看得见吗」，见 §4 的页面槽那段）/
    │                 useGithubDiscovery（商店里「GitHub 发现」那一份，见 §8.12）/

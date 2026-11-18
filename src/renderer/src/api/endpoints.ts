@@ -190,6 +190,40 @@ export function prefetchSong(client: ApiClient, path: string): Promise<void> {
   return client.request<void>(path)
 }
 
+/* ───────────────────────── 电台 ───────────────────────── */
+
+export interface RadioInput {
+  /** 电台播放地址（m3u8 / mp3 / aac 等，后端自己判协议） */
+  url: string
+  /** 电台名称 */
+  title: string
+  /**
+   * 这条链接是否含视频画面（电视直播）。
+   *
+   * ★ 桌面端自己用不上（只出声音，没有视频面），它是写进曲库给**有画面能力的客户端**
+   *   （网页端 / 移动端）用的 —— 那些端会按这个字段决定要不要渲染画面。
+   */
+  is_video?: boolean
+}
+
+/**
+ * 添加电台（`POST /songs/radio`）。
+ *
+ * 后端一次能收多条（返回里 `songs` 是新增的那些，`count` 是条数）。桌面端的表单一次
+ * 只加一条，但这里照原样支持批量 —— 将来要做「粘贴多行一次导入」时不必再动这一层。
+ */
+export function addRadios(
+  client: ApiClient,
+  inputs: RadioInput[]
+): Promise<{ songs: Song[]; count: number }> {
+  return client
+    .request<{ songs?: Song[]; count?: number }>('/songs/radio', { method: 'POST', body: inputs })
+    .then((result) => ({
+      songs: result.songs ?? [],
+      count: result.count ?? result.songs?.length ?? 0
+    }))
+}
+
 export function updateSong(
   client: ApiClient,
   id: number,

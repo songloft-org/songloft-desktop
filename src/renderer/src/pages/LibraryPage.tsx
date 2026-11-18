@@ -34,11 +34,13 @@ import {
   IconClose,
   IconEyeOff,
   IconPlay,
+  IconPlus,
   IconRefresh,
   IconSearch,
   IconSparkle,
   IconUpload
 } from '@/components/Icons'
+import { AddRadioDialog } from '@/components/AddRadioDialog'
 import { LibraryHeader } from '@/components/LibraryHeader'
 import { CardGridSkeleton, Cover, EmptyState } from '@/components/primitives'
 import { SelectionBar } from '@/components/SelectionBar'
@@ -106,6 +108,8 @@ function LibraryView(): React.JSX.Element {
   const [sort, setSort] = useState<SongSort | null>({ field: 'added_at', order: 'desc' })
   const [selection, setSelection] = useState<number[]>([])
   const [selectAllIds, setSelectAllIds] = useState<number[] | null>(null)
+  /** 「添加电台」对话框：只有「电台」这一档用得上，其它档位连按钮都不出现 */
+  const [addingRadio, setAddingRadio] = useState(false)
 
   const query = useMemo(
     () => ({
@@ -173,6 +177,13 @@ function LibraryView(): React.JSX.Element {
     <>
       {/* 这一页的动作钮作为页头的 children：与来源切换同一行（见 LibraryHeader） */}
       <LibraryHeader pane="library" subtitle={subtitle}>
+        {/* 只有「电台」这一档才有「添加」这件事：它是曲库里唯一靠链接录进来的类型 */}
+        {type === 'radio' ? (
+          <button type="button" className="btn" onClick={() => setAddingRadio(true)}>
+            <IconPlus size={15} />
+            添加电台
+          </button>
+        ) : null}
         <button type="button" className="btn" onClick={() => list.refresh()}>
           <IconRefresh size={15} />
           刷新
@@ -434,6 +445,17 @@ function LibraryView(): React.JSX.Element {
           onRemoved={(ids) => {
             list.removeSongs(ids)
             clearSelection()
+          }}
+        />
+      ) : null}
+
+      {addingRadio ? (
+        <AddRadioDialog
+          onClose={() => setAddingRadio(false)}
+          onAdded={() => {
+            setAddingRadio(false)
+            // 明着刷新一次：新加的那条要立刻出现在列表里（与手动点「刷新」同一条路径）
+            list.refresh()
           }}
         />
       ) : null}
