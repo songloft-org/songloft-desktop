@@ -384,6 +384,8 @@ window.__t = {
    */
   counts: () => ({
     rows: vis('.song-row').length,
+    /** 这一页里被选中的行数（data-selected）—— 多选的「选中了几个」只认它，别去数操作条上的字 */
+    selectedRows: vis('.song-row').filter((e) => e.dataset.selected === 'true').length,
     /**
      * 当前正播的那一行在这份列表里的下标；-1 = 这一页没有当前曲（没在播 / 歌不在列表里）。
      * 用来钉住「点的是第几行」——只断言偏移的话，定位到邻行也能绿。
@@ -1016,23 +1018,43 @@ const STEPS = [
 
   /*
    * ── 多选与批量操作 ─────────────────────────────────────────────────────
-   * 曲库**没有行首复选框**：多选是 Ctrl / Cmd 点行（Shift 连选）。
-   * 断言分两步：先确认点一行后操作条出现，再确认第二行是**加**进去的 ——
-   * 只断言操作条存在的话，「点两行只选出 1 行」也照样绿。
+   * 曲库**没有行首复选框**：多选是 Ctrl / Cmd 点行（单独增减）、Shift 点行（按区间连选），
+   * 口径照 Windows 资源管理器。断言分三层：
+   *   · 只选中 1 首时**不出现**操作条 —— 批量动作对单曲没有意义，那条只会盖住列表最后几行；
+   *   · 再 Ctrl 点第二行：操作条出现且写着「已选 2 首」（「点两行只选出 1 行」也满足
+   *     「条子上有字」，所以选中行数要单独数）；
+   *   · Shift 连选两轮：区间以**同一个锚点**伸缩。第二轮回到近处必须缩回 2 行 ——
+   *     锚点若被上一次 Shift 的落点改写，这里会是 4 行。
    */
   [
     '23-select-one',
     "window.__t.modClick('.song-row', 0, { ctrlKey: true })",
     1200,
-    { selectionBars: exactly(1), selectionText: containsAll('已选 1 首') }
+    { selectedRows: exactly(1), selectionBars: exactly(0) }
   ],
   [
     '24-select-two',
     "window.__t.modClick('.song-row', 1, { ctrlKey: true })",
     1200,
     {
+      selectedRows: exactly(2),
+      selectionBars: exactly(1),
       selectionText: containsAll('已选 2 首', '播放', '加入队列', '加入歌单', '收藏', '从曲库删除')
     }
+  ],
+  // 锚点是上一次**不带 Shift** 的点击（第 2 行）→ 点到第 6 行是 5 行
+  [
+    '24b-shift-range',
+    "window.__t.modClick('.song-row', 5, { shiftKey: true })",
+    1200,
+    { selectedRows: exactly(5), selectionText: containsAll('已选 5 首') }
+  ],
+  // 同一个锚点往回收：2 行
+  [
+    '24c-shift-anchor',
+    "window.__t.modClick('.song-row', 2, { shiftKey: true })",
+    1200,
+    { selectedRows: exactly(2), selectionText: containsAll('已选 2 首') }
   ],
   // 「取消选择」把整条操作条收回去（它是这一页唯一的出口，收起后不该留一块空壳）
   [

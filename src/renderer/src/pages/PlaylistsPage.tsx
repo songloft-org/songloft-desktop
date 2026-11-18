@@ -35,7 +35,7 @@ import {
 import { CardGridSkeleton, Cover, EmptyState, SongRowsSkeleton } from '@/components/primitives'
 import { openMenuFromEvent, type MenuItem } from '@/components/ContextMenu'
 import { Modal } from '@/components/Modal'
-import { SelectionBarShell } from '@/components/SelectionBar'
+import { SelectionBarShell, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { usePageActive } from '@/hooks/usePageActive'
 import { isDeletablePlaylist, usePlaylists, FAVORITE_PLAYLIST_ID } from '@/state/usePlaylists'
 import { useSettings } from '@/state/useSettings'
@@ -467,7 +467,7 @@ export function PlaylistsPage(): React.JSX.Element {
         </div>
       )}
 
-      {picked.length > 0 ? (
+      {shouldShowSelectionBar(picked.length) ? (
         <SelectionBarShell
           label={
             <span className="badge" data-tone="accent">

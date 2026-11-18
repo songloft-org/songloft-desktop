@@ -5,7 +5,8 @@
  * 行内动作、排序、多选、拖拽集中在同一个组件里：
  *   * 表头可排序（点击循环 升序 → 降序 → 取消）
  *   * 行 hover 才出现的快捷动作（播放/收藏/更多），不占常驻视觉
- *   * Ctrl/Cmd 点选、Shift 连选，配合侧栏批量操作
+ *   * 多选照 Windows 资源管理器的口径：Ctrl/Cmd 单击单独增减、Shift 单击按区间连选，
+ *     配合侧栏批量操作
  *   * 行可直接拖到侧栏歌单（dataTransfer 带 `application/x-songloft-songs`）
  *   * 歌单上下文下支持拖拽重排（onReorder）
  */
@@ -131,6 +132,8 @@ export function SongTable({
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const dragSource = useRef<number | null>(null)
   const selectionSet = useMemo(() => new Set(selection), [selection])
+  /** Shift 连选的锚点：上一次**不带 Shift** 的点击落点（见 handleRowClick 的说明） */
+  const selectionAnchor = useRef<number | null>(null)
 
   const gridTemplate = useMemo(() => columns.map((c) => c.width).join(' '), [columns])
 
@@ -141,29 +144,53 @@ export function SongTable({
     else onSortChange(null)
   }
 
+  /*
+   * 行点击的选中语义，照 Windows 资源管理器：
+   *   · 单击                → 只留这一行
+   *   · Ctrl / Cmd 单击     → 单独增减这一行，其余不动
+   *   · Shift 单击          → 从锚点到这一行整段替换选择
+   *   · Ctrl + Shift 单击   → 把这一段叠到已有选择上，不丢掉原来选的那些
+   *
+   * ★ 锚点必须是「上一次不带 Shift 的点击」，不能拿选中集的末项顶替：按住 Shift 先点远处、
+   *   再点近处时，末项口径会以第二次的落点为准把区间越收越小，而 Windows 里区间始终绕同一个
+   *   锚点伸缩。所以它单独记在 ref 里；`onSelectionChange` 的第二个参数照旧把它报给父级 ——
+   *   「谁选中的、从哪儿量起」属于这一层的事实，父级眼下用不上也不该让它猜。
+   * ★ 锚点会过期，唯一的情形是列表变短到锚点那一行不再存在（删歌 / 换筛选）。这时当作没有
+   *   锚点、退回单击语义，否则会拿一个越界下标铺出一条几千项的空区间。
+   * ★ 结果一律按行号排好序：连点的先后不该决定「播放选中」放出来的顺序。
+   */
   const handleRowClick = useCallback(
     (event: React.MouseEvent, index: number) => {
       if (!onSelectionChange) return
       const additive = event.ctrlKey || event.metaKey
-      const ranged = event.shiftKey
-      if (ranged && selection.length > 0) {
-        const anchor = selection[selection.length - 1]
+      const raw = selectionAnchor.current
+      const anchor = raw != null && raw >= 0 && raw < songs.length ? raw : null
+
+      if (event.shiftKey && anchor !== null) {
         const [from, to] = anchor < index ? [anchor, index] : [index, anchor]
-        const next: number[] = []
-        for (let i = from; i <= to; i += 1) next.push(i)
-        onSelectionChange(next, index)
+        const range: number[] = []
+        for (let i = from; i <= to; i += 1) range.push(i)
+        const next = additive
+          ? Array.from(new Set([...selection, ...range])).sort((a, b) => a - b)
+          : range
+        // 锚点不动：接着按 Shift 点，区间还是在同一个锚点上伸缩
+        onSelectionChange(next, anchor)
         return
       }
+
       if (additive) {
-        const next = selectionSet.has(index)
-          ? selection.filter((i) => i !== index)
-          : [...selection, index]
+        const next = (
+          selectionSet.has(index) ? selection.filter((i) => i !== index) : [...selection, index]
+        ).sort((a, b) => a - b)
+        selectionAnchor.current = index
         onSelectionChange(next, index)
         return
       }
+
+      selectionAnchor.current = index
       onSelectionChange([index], index)
     },
-    [onSelectionChange, selection, selectionSet]
+    [onSelectionChange, selection, selectionSet, songs.length]
   )
 
   const visibleSongs = songs.length > maxRendered ? songs.slice(0, maxRendered) : songs

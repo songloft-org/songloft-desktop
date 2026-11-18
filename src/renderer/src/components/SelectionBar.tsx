@@ -25,6 +25,17 @@ import { usePlaylists } from '@/state/usePlaylists'
 import { useUi } from '@/state/useUi'
 import { toast } from '@/state/useToasts'
 
+/**
+ * 多选操作条该不该出现：**选中项 ≥ 2** 才有意义。
+ *
+ * 只选中一项时底部那条是纯噪声 —— 播放 / 加入队列 / 收藏都在行上（hover 出来的按钮、
+ * 右键菜单）拿得到，而它一出现就盖住列表最后几行，还会让人以为「选中了但只看得到一个」。
+ * 于是这条判断只写在组件旁边这一处：各页只负责把口径（行选中还是「全选筛选」）算成个数。
+ */
+export function shouldShowSelectionBar(count: number): boolean {
+  return count > 1
+}
+
 export interface SelectionBarProps {
   ids: number[]
   /** 有完整对象时才支持播放 / 加入队列 */

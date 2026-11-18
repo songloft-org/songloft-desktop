@@ -43,7 +43,7 @@ import {
 import { AddRadioDialog } from '@/components/AddRadioDialog'
 import { LibraryHeader } from '@/components/LibraryHeader'
 import { CardGridSkeleton, Cover, EmptyState } from '@/components/primitives'
-import { SelectionBar } from '@/components/SelectionBar'
+import { SelectionBar, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { LIBRARY_COLUMNS, SongTable, type SongSort } from '@/components/SongTable'
 import { getFacets } from '@/api/endpoints'
 import { useAsync } from '@/hooks/useAsync'
@@ -421,7 +421,8 @@ function LibraryView(): React.JSX.Element {
         }
       />
 
-      {list.songs.length > 0 && selection.length === 0 && !selectAllIds ? (
+      {/* 操作条不出现时（选中 0~1 首）「全选筛选」一直在这儿，别让这一档成了死角 */}
+      {list.songs.length > 0 && selection.length < 2 && !selectAllIds ? (
         <div className="load-more">
           <button
             type="button"
@@ -435,7 +436,7 @@ function LibraryView(): React.JSX.Element {
         </div>
       ) : null}
 
-      {selectAllIds || selection.length > 0 ? (
+      {shouldShowSelectionBar(selectAllIds?.length ?? selection.length) ? (
         <SelectionBar
           ids={totalForBar}
           songs={selectAllIds ? undefined : selectedSongs}

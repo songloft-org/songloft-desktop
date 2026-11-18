@@ -18,7 +18,7 @@ import type { Song } from '@shared/types'
 import { IconFolder, IconFolderOpen, IconMusic, IconPlay, IconRefresh } from '@/components/Icons'
 import { LibraryHeader } from '@/components/LibraryHeader'
 import { EmptyState } from '@/components/primitives'
-import { SelectionBar } from '@/components/SelectionBar'
+import { SelectionBar, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { LIBRARY_COLUMNS, SongTable } from '@/components/SongTable'
 import { getFolders } from '@/api/endpoints'
 import { useAsync } from '@/hooks/useAsync'
@@ -173,7 +173,7 @@ export function FoldersView({ path }: { path: string }): React.JSX.Element {
         />
       ) : null}
 
-      {selectAllIds || selection.length > 0 ? (
+      {shouldShowSelectionBar(selectAllIds?.length ?? selection.length) ? (
         <SelectionBar
           ids={
             selectAllIds ?? selection.map((i) => songs[i]?.id).filter((x): x is number => x != null)

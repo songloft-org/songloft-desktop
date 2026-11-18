@@ -9,7 +9,7 @@ import { useMemo, useState } from 'react'
 
 import type { Song } from '@shared/types'
 import { IconHeart, IconPlay, IconRefresh, IconShuffle } from '@/components/Icons'
-import { SelectionBar } from '@/components/SelectionBar'
+import { SelectionBar, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { PLAYLIST_COLUMNS, SongTable, type SongSort } from '@/components/SongTable'
 import { usePlaylistSongs } from '@/hooks/usePlaylistSongs'
 import { usePlayer } from '@/state/usePlayer'
@@ -125,7 +125,8 @@ export function FavoritesPage(): React.JSX.Element {
         }
       />
 
-      {list.songs.length > 0 && selection.length === 0 && !selectAllIds ? (
+      {/* 操作条不出现时（选中 0~1 首）「全选」一直在这儿，别让这一档成了死角 */}
+      {list.songs.length > 0 && selection.length < 2 && !selectAllIds ? (
         <div className="load-more">
           <button
             type="button"
@@ -139,7 +140,7 @@ export function FavoritesPage(): React.JSX.Element {
         </div>
       ) : null}
 
-      {selectAllIds || selection.length > 0 ? (
+      {shouldShowSelectionBar(selectAllIds?.length ?? selection.length) ? (
         <SelectionBar
           ids={
             selectAllIds ??
