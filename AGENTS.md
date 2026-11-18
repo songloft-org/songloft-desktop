@@ -114,7 +114,9 @@ src/
 │  ├─ files.ts        导出 / 导入的文本文件对话框（读入限 32MB）
 │  ├─ probe.ts        后端探测（本地 Blob 解码，避免为它关掉 webSecurity）
 │  ├─ local-files.ts  本地文件的收件口：启动参数 / macOS open-file / 文件对话框（排队 + 摇铃）
-│  ├─ media-protocol.ts 本地文件的媒体协议 songloft-media://（按 Range 读字节；见 §8.16）
+│  ├─ media-protocol.ts 两条自定义协议的声明 + 本地文件的媒体协议 songloft-media://
+│  │                   （按 Range 读字节；见 §8.16、§8.25）
+│  ├─ hls-relay.ts    外链 HLS 的中继协议 songloft-hls://（主进程代取，绕开 CORS；见 §8.25）
 │  ├─ github-discovery.ts 「GitHub 发现」的请求与逐仓库核对（缓存 / 限流 / Token；见 §8.12）
 │  ├─ release.ts      客户端更新：查 GitHub release，挑出本机该下的那份安装包（见 §8.21）
 │  ├─ proxy.ts        「服务器配的那个代理，本机能不能用」：解析 + TCP 探活
@@ -131,6 +133,7 @@ src/
 │  ├─ lyric.ts        歌词四路合并 + 解析 + 当前行/逐字定位
 │  ├─ plugin.ts       JS 插件模型 / 排序纯函数 / 扩展页 URL 拼接 / PLUGIN_PARTITION
 │  ├─ local-file.ts   本地文件播放：路径 ↔ 可播放地址 ↔ Song 的换算 + Range 解析（§8.16）
+│  ├─ hls-relay.ts    HLS 中继：上游地址 ↔ songloft-hls:// 的编码 + m3u8 里的 URI 改写（§8.25）
 │  ├─ data.ts         两份数据快照是否等价（页面切回时的**静默刷新**靠它判断「要不要动界面」）
 │  ├─ metadata.ts     元数据缺口判定 / 「只补缺失」的合并 / 封面与标题的降级口径
 │  ├─ github-discovery.ts 「GitHub 发现」的纯逻辑：清单 / Release 校验、搜索语句、卡片状态（§8.12）
@@ -143,7 +146,8 @@ src/
    │                 plugins.ts（JS 插件：列表 / 启停 / 卸载 / 顺序 / 商店）
    ├─ state/         useAuth / usePlayer / usePlaylists / useSettings / useUi / useToasts /
    │                 player-core（**播放核心**：音频 / 队列 / 歌词 / 音轨 —— 与窗口形态无关）/
-   │                 hls-source（电台 HLS 的播放通道：hls.js 动态加载 + 失败分类，见 §5.3）/
+   │                 hls-source（电台 HLS 的播放通道：hls.js 动态加载 + 失败分类 +
+   │                 没 CORS 的源改走主进程中继，见 §5.3、§8.25）/
    │                 remotePlayer（宿主的镜像）/ usePlayer（按窗口角色分流，见 §8.17）/
    │                 mini-host（宿主推快照 + 接遥控命令）/
    │                 local-session（**本地文件会话**的启动编排：迷你宿主窗靠它起播，见 §8.17）/
@@ -282,7 +286,9 @@ src/
    于是 `state/hls-source.ts` 用 hls.js（MSE）接管这一路，`.m3u8` 之外一条都不碰；
    它走不通时（没有 MSE / 跨域 / 编码不受支持）换源链会请服务端转一条 mp3 裸流
    （`radio_transcode=mp3`，地址要去掉 `.m3u8` 后缀 —— Chromium 按后缀判协议，见 `lib/url`）。
-   无 CORS 的源靠服务端「HLS 代理」开关兜底，客户端只负责如实报错并提示这个开关。
+   **没有 CORS 的源由主进程代取**（`songloft-hls://` 中继，见 §8.25）：hls.js 只是在
+   `loadSource` 时换了个地址，读到的每一份列表都已改写回中继地址。视频与**外链** HLS 一律
+   走它；后端自己的 `/songs/{id}/play…` 直连（那份响应本来就带放行头）。
    **视频（`is_video`）不是第二条管线**：那颗媒体元素本身就是 `<video>`，视频只决定
    「要不要把画面摆到界面上」（满窗播放器里由 `components/VideoStage` 挪进去），
    URL 上只多一个 `media=video`（见 §8.24）。
@@ -1042,6 +1048,30 @@ token、码率偏好、要转码的格式都在渲染层，主进程再拼一份
 逐字高亮与译音偏好与歌词页同源）。`is_video` 为真但流里没有视频轨时就是一块黑底 —— 原版
 全屏视频界面的 fallback 也是纯黑，刻意的。
 
+### 8.25 HLS 中继（`songloft-hls://`）：源站不给 CORS 时由主进程代取
+
+**为什么需要**：hls.js 读播放列表与切片用的是 XHR，源站不回 `Access-Control-Allow-Origin`
+就一个字节都读不到（hls.js 只看到 `status 0`）。上游 Flutter 端用 libmpv 按裸连接拉流，
+根本没有这一层，所以同一个源在那边能放。**视频源几乎必然踩上**：后端 `?media=video` 对
+电台/外链是 302 到源站，最终那份 m3u8 的响应头由源站说了算 —— 这也是「mp4 视频一直正常、
+只有 HLS 坏」的原因（`<video src>` 本身不受 CORS 限制）。
+
+**做法**：`shared/hls-relay.ts` 把上游地址编码进 `songloft-hls://r/<base64url>`，主进程
+（`main/hls-relay.ts`）用 `net.fetch` 去取，把列表里每条 URI 改写回中继地址，切片字节原样
+流回。四件事不能动：
+
+* **按内容分流，不按后缀 / `Content-Type`**：顶层那条地址常常没有后缀（`/play?media=video`），
+  有的源站还给 `.m3u8` 发 `application/octet-stream`。判据是响应体是否以 `#EXTM3U` 开头
+  （`isPlaylistText`）—— 判错的表现是「列表原样吐回、URI 一条都没改」，症状与没修一样。
+* **相对 URI 按重定向之后的最终地址解析**（`response.url`），不是请求前的地址。
+* **切片的状态码与 Range 头透传**：hls.js 靠 `206 + Content-Range` 判断分段取址成没成，
+  自己编一个 200 会让它以为拿到了整段。
+* **中继响应必须自带 CORS 头**（`corsEnabled` 的特权协议在渲染层眼里仍是跨源），
+  且打包态的 CSP 要把 `songloft-hls:` 加进 `connect-src` —— 否则开发态正常、打包态全哑。
+
+`registerSchemesAsPrivileged` **整个进程只能调一次**，所以两条自定义协议（`songloft-media` /
+`songloft-hls`）都在 `main/media-protocol.ts` 的 `registerMediaSchemes()` 里一起声明。
+
 ---
 
 ## 9. 不要做
@@ -1106,6 +1136,10 @@ token、码率偏好、要转码的格式都在渲染层，主进程再拼一份
 H.264/AAC 的 mp4、webm、HLS 都没问题，mkv/avi/rmvb 与 HEVC 大概率放不出画面
 （上游会把「老旧容器」交给后端的 `video-hls` 边转边播，本仓库还没有接那条端点）。
 这类源在桌面端会如实报「放不出来」，**不会**静默退回成只听声音。
+
+**无 CORS 的 HLS 已经补上**（§8.25）：hls.js 那一路改由主进程代取，源站不给放行头也能放 ——
+这一条覆盖视频源与外链电台。原先「靠服务端 HLS 代理开关兜底」的说法已经过时：那个开关只
+对**后端自己的**播放地址有意义（serveRadio 那条路），视频的 `?media=video` 根本不经过它。
 
 **本地文件即播（桌面端独有）**：双击本机的音频文件（或菜单 / 曲库页的「本地」那一半里挑）就开始放，
 **不需要登录、也不进曲库** —— 上游只有「后端扫描入库的本地文件」这一条路。装了包之后系统里
