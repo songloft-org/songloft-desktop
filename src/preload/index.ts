@@ -25,6 +25,7 @@ import type {
   MiniCommand,
   MiniPlayerSnapshot,
   MiniWindowLayout,
+  RenderCacheReconcileResult,
   ServerEntry,
   TraySnapshot,
   WindowState
@@ -108,7 +109,9 @@ const bridge: SongloftBridge = {
   },
   cache: {
     stats: () => ipcRenderer.invoke(IPC.localCacheStats) as Promise<LocalCacheStats>,
-    clear: () => ipcRenderer.invoke(IPC.localCacheClear) as Promise<LocalCacheStats>
+    clear: () => ipcRenderer.invoke(IPC.localCacheClear) as Promise<LocalCacheStats>,
+    reconcile: (request) =>
+      ipcRenderer.invoke(IPC.renderCacheReconcile, request) as Promise<RenderCacheReconcileResult>
   },
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo),

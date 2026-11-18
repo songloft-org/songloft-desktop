@@ -7,6 +7,7 @@
 
 import type { GithubInstalls } from './github-discovery'
 import type { ParsedLyric } from './lyric'
+import type { RenderCacheTarget } from './render-cache'
 import type { PlayMode, Song } from './types'
 import type { ClientUpdateAsset } from './update'
 
@@ -60,6 +61,13 @@ export const IPC = {
   localCacheStats: 'cache:stats',
   /** 清掉本机磁盘缓存，返回清理后的占用 */
   localCacheClear: 'cache:clear',
+  /**
+   * 版本协调：把「后端版本 / 插件列表签名」交给主进程比对，变了就清掉对应的会话缓存。
+   *
+   * 渲染层是唯一拿得到这两样东西的地方（`/version` 要会话、插件列表也只有它去取），
+   * 而清缓存只有主进程能做 —— 于是判定规则放在 shared/render-cache.ts，两边各做自己那一半。
+   */
+  renderCacheReconcile: 'cache:reconcile',
   /** 主进程代取封面字节（canvas 取主色需要，绕开跨域画布污染） */
   colorExtract: 'cover:extract',
   appInfo: 'app:info',
@@ -375,6 +383,16 @@ export interface LocalCacheStats {
   size: number
   /** 生效中的上限字节（0 = 交给 Chromium 按可用磁盘空间自行决定） */
   maxSize: number
+}
+
+/**
+ * 渲染缓存协调的结果。
+ *
+ * `cleared` 是这一轮真正清掉的会话 —— 界面不看它（清了什么对用户不可见），留着是给排障：
+ * 一句 `console` 就能回答「到底是它清的，还是别处清的」。
+ */
+export interface RenderCacheReconcileResult {
+  cleared: RenderCacheTarget[]
 }
 
 export interface ServerProbeResult {

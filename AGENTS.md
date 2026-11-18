@@ -966,6 +966,40 @@ token、码率偏好、要转码的格式都在渲染层，主进程再拼一份
 盖住）；宽度按**层的内容盒**算 `min(520px, 100%)`，不要对着 `100vw`（可见面比窗口小一圈）。
 想加新弹层就复用一个 `Overlay`，别再各写一套遮罩。
 
+### 8.23 缓存失效：三类「更新」各清哪些会话，口径只在 `shared/render-cache.ts`
+
+两个 Chromium 会话各自缓存**远端字节**：`defaultSession`（封面等）与
+`persist:songloft-extensions`（插件页 HTML、插件自己的 `static/*`、后端投的公共运行时
+`theme.css / components.css / common.js / lynx-plugin-bridge-shim.js / web-core/*`）。
+
+**为什么必须清**：这些 URL 大多不带版本号。真实事故：`lynx-plugin-bridge-shim.js` 被旧服务端
+以 `immutable` 缓存了一年，后端升级到「会设 `<lynx-view url>`」的 v2.13.12 之后，客户端拿到的
+仍是不会设 url 的旧 shim —— Lynx 插件永久白屏，控制台一句错都没有。
+
+| 触发 | 判定 | 清哪些会话 |
+|---|---|---|
+| 插件更新 / 安装 / 卸载 | 插件列表签名（`entryPath + id + version + updatedAt + icon`） | 插件会话 |
+| 后端更新 | `/version` 的 `version + git_commit + build_type` | 插件会话 |
+| 客户端更新 | `app.getVersion()` | 插件会话 + 默认会话 |
+
+六条不要改错的地方：
+
+1. **后端更新不碰默认会话**：那里只有封面（URL 带歌曲 id，升级不变）与接口响应（没有验证器，
+   本来就不复用）—— 清它是白花。
+2. **客户端更新两边都清**：客户端自己的资源 URL 约定可能变（封面尺寸参数、媒体地址）。
+3. **插件会话是共享的**：Electron 没有按 URL 驱逐的 API，所以一次清理会连带那 620KB 运行时
+   一起重下 —— 相比「清漏」的代价，这个可以接受。
+4. **存储类一律不动**：Local Storage（插件页的 token 注入）、Cookies、IndexedDB、`config.json`
+   都不清。判断依据只有一条：**用户会感知到要重做的事，就不是缓存**。
+5. **第一次见到某版本号只记录、不清**（新连服务器不该白清一遍），唯一例外见下一条：
+   客户端那一档的**第一次运行**也要清一次**插件会话** —— 新装时它是空的（免费），
+   从老版本升上来时它可能正压着旧远端代码，而那正是这套机制要治的病。
+6. **插件启停不进签名**：它不改变字节，进签名就成了「点一次开关清一次缓存」。
+
+落地：`main/render-cache.ts`（执行 + 记账）、`main/store.ts` 的 `renderCache`（**不进
+`AppSettings`**：那份会整份交给渲染层）、`renderer/src/state/render-cache.ts`（只负责把后端版本
+与插件签名报上来）。判定是纯函数，单测在 `shared/render-cache.test.ts`。
+
 ---
 
 ## 9. 不要做

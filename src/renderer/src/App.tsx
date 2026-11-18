@@ -59,6 +59,7 @@ import { installLocalFileIntake } from './state/useLocalFiles'
 import { installMediaCommands } from './state/media-commands'
 import { installMiniHost } from './state/mini-host'
 import { installMetadataWatch } from './state/song-metadata'
+import { useRenderCacheReconcile } from './state/render-cache'
 import {
   installMediaSessionHandlers,
   installNowPlayingSync,
@@ -149,6 +150,13 @@ export function App(): React.JSX.Element {
    *   「走完了」与那个落点在同一个同步块里置位，中间就插不进这么一帧。
    */
   const [booted, setBooted] = useState(false)
+
+  /*
+   * 渲染缓存失效：把「后端版本 / 插件列表签名」报给主进程（判定与清理都在那一侧，见
+   * shared/render-cache.ts）。**不进**下面那段一次性启动编排 —— 它要的两样东西各在别的时机
+   * 到达（会话就绪 / 插件列表加载完），而插件列表还会因为装卸再变。
+   */
+  useRenderCacheReconcile()
 
   /* ── 窗级订阅：迷你窗那两条 + 窗口状态（可以、也必须反复装卸）────────── */
   /*

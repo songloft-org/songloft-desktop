@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path'
 
 import { DEFAULT_SETTINGS, type AppSettings, type ServerEntry } from '@shared/ipc'
+import { EMPTY_RENDER_CACHE_STATE, type RenderCacheState } from '@shared/render-cache'
 import { PLAY_MODES } from '@shared/types'
 import type { StoredCredentials } from '@shared/bridge-types'
 
@@ -35,6 +36,15 @@ interface ConfigFile {
   servers: ServerEntry[]
   credentials: Record<string, StoredCredentials>
   window: WindowBounds
+  /**
+   * 上次见到的「客户端 / 后端 / 插件」版本三件套（见 shared/render-cache.ts）。
+   *
+   * ★ 它不是设置，也不该进 AppSettings：这两者的差别不是审美 —— AppSettings 会经 IPC
+   *   整份交给渲染层，而版本记录只有主进程读写，混进去等于把内部簿记也变成「可改的偏好」。
+   * ★ 必须落盘：不落盘的话每次启动都会把三件套当成「第一次见到」，于是永远不清缓存 ——
+   *   而它要防的正是「旧远端代码跨版本驻留」。
+   */
+  renderCache: RenderCacheState
 }
 
 const DEFAULT_WINDOW: WindowBounds = { width: 1440, height: 920, maximized: false }
@@ -55,8 +65,19 @@ function emptyConfig(): ConfigFile {
     settings: { ...DEFAULT_SETTINGS },
     servers: [],
     credentials: {},
-    window: { ...DEFAULT_WINDOW }
+    window: { ...DEFAULT_WINDOW },
+    renderCache: { ...EMPTY_RENDER_CACHE_STATE }
   }
+}
+
+/** 版本记录里那两张表只要「字符串 → 字符串」，别的形状一律当没写过 */
+function stringMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object') return {}
+  const result: Record<string, string> = {}
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof item === 'string' && item) result[key] = item
+  }
+  return result
 }
 
 export class ConfigStore {
@@ -123,7 +144,12 @@ export class ConfigStore {
           ? raw.servers.filter((s) => s && typeof s.url === 'string')
           : [],
         credentials: raw.credentials && typeof raw.credentials === 'object' ? raw.credentials : {},
-        window: { ...DEFAULT_WINDOW, ...(raw.window ?? {}) }
+        window: { ...DEFAULT_WINDOW, ...(raw.window ?? {}) },
+        renderCache: {
+          client: typeof raw.renderCache?.client === 'string' ? raw.renderCache.client : '',
+          backend: stringMap(raw.renderCache?.backend),
+          plugins: stringMap(raw.renderCache?.plugins)
+        }
       }
     } catch (error) {
       console.error('[store] 配置读取失败，回退到默认值', error)
@@ -239,6 +265,25 @@ export class ConfigStore {
       accounts[key] = creds.username ?? ''
     }
     return accounts
+  }
+
+  // ── 渲染缓存版本记录（见 shared/render-cache.ts）──────────────────────────
+  getRenderCacheState(): RenderCacheState {
+    return {
+      client: this.data.renderCache.client,
+      backend: { ...this.data.renderCache.backend },
+      plugins: { ...this.data.renderCache.plugins }
+    }
+  }
+
+  setRenderCacheState(state: RenderCacheState): void {
+    this.mutate((data) => {
+      data.renderCache = {
+        client: state.client,
+        backend: { ...state.backend },
+        plugins: { ...state.plugins }
+      }
+    })
   }
 
   // ── window ─────────────────────────────────────────────────────────────

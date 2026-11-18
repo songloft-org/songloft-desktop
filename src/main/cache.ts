@@ -8,9 +8,11 @@
  * 这份的读写只有主进程能做（渲染层连不上会话缓存）。
  */
 
-import { app, session } from 'electron'
+import { app, session, type Session } from 'electron'
 
 import type { LocalCacheStats } from '@shared/ipc'
+import { PLUGIN_PARTITION } from '@shared/plugin'
+import type { RenderCacheTarget } from '@shared/render-cache'
 
 /**
  * 启动时交给 Chromium 的上限（0 = 不限）。
@@ -39,15 +41,36 @@ export async function readLocalCache(): Promise<LocalCacheStats> {
 }
 
 /**
+ * 清掉某个会话的 HTTP 缓存与 JS 代码缓存。
+ *
+ * ★ 代码缓存不进 HTTP 缓存（它是 V8 编好的代码），但同样是**远端代码**的产物、同样会跟着
+ *   版本一起过期 —— 只清 HTTP 缓存的话，旧 bundle 的编译结果仍然可能被复用。
+ * ★ **不动存储类**：Local Storage / Cookies / IndexedDB 一律不碰。插件页把后端注入的 token
+ *   写在 Local Storage 里（见 shared/plugin.ts），清它等于每次清缓存都让人重登一次。
+ */
+export async function clearSessionCaches(ses: Session): Promise<void> {
+  await ses.clearCache()
+  await ses.clearCodeCaches({})
+}
+
+/**
+ * 按**目标**清缓存（策略在 shared/render-cache.ts，这里只负责落地）。
+ *
+ * `plugin` 是扩展页那个独立分区（PLUGIN_PARTITION）—— 所有插件页、插件自带的 static、
+ * 以及后端投的公共运行时（theme/components/common.js / shim / web-core）都在它里面。
+ */
+export async function clearRenderCache(target: RenderCacheTarget): Promise<void> {
+  const ses = target === 'app' ? session.defaultSession : session.fromPartition(PLUGIN_PARTITION)
+  await clearSessionCaches(ses)
+}
+
+/**
  * 清掉本机缓存并回读占用。
  *
- * 清的是 HTTP 缓存与 JS 代码缓存，**不动** Local Storage / IndexedDB（真清那两处等于把
+ * 就是默认会话那一份（设置页那张卡片）。**不动** Local Storage / IndexedDB（真清那两处等于把
  * 会话里的东西一起端掉）。凭据与设置本来就在 ConfigStore 的 JSON 里，不受影响。
  */
 export async function clearLocalCache(): Promise<LocalCacheStats> {
-  const ses = session.defaultSession
-  await ses.clearCache()
-  // 代码缓存不进 HTTP 缓存，但它同样是缓存、同样会慢慢长大，一起清掉
-  await ses.clearCodeCaches({})
+  await clearSessionCaches(session.defaultSession)
   return readLocalCache()
 }

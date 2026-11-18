@@ -63,9 +63,11 @@ import {
   showMiniWindow
 } from './mini-window'
 import { fetchCoverBytes, probeServer } from './probe'
+import { reconcileClientCache, reconcileFromRenderer } from './render-cache'
 import type { CastAction, CastRequest } from '@shared/dlna'
 import { LOCAL_FILE_SCHEME } from '@shared/local-file'
 import { PLUGIN_PARTITION } from '@shared/plugin'
+import type { RenderCacheRequest } from '@shared/render-cache'
 import { PORTABLE_MARKER_FILE, chooseUserDataDir, portableDataDir } from '@shared/user-data'
 import { ConfigStore } from './store'
 import { createTray, destroyTray, render as renderTray, type TrayDeps } from './tray'
@@ -643,6 +645,13 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC.localFilesTakePending, () => takePendingPaths())
   ipcMain.handle(IPC.localCacheStats, () => readLocalCache())
   ipcMain.handle(IPC.localCacheClear, () => clearLocalCache())
+  /*
+   * 版本协调（客户端那一路在 whenReady 里自己比对，见 reconcileClientCache）：
+   * 渲染层只负责把「后端版本 / 插件列表签名」报上来，比不比、清不清全在主进程这边。
+   */
+  ipcMain.handle(IPC.renderCacheReconcile, (_event, request: RenderCacheRequest) =>
+    reconcileFromRenderer(store, request)
+  )
   ipcMain.handle(IPC.colorExtract, (_event, url: string) => fetchCoverBytes(url))
   ipcMain.handle(IPC.appInfo, (): AppInfo => ({
     name: app.getName(),
@@ -737,6 +746,12 @@ if (gotTheLock) {
     setLocalFilesNotifier(() => sendToHost(IPC.onLocalFilesPending, null))
     // 必须早于任何 webview 挂载：它注册的 web-contents-created 只在创建时生效一次
     hardenPluginSession()
+    /*
+     * 客户端版本变了就清一次渲染缓存（见 shared/render-cache.ts）。**不 await**：
+     * 清掉几百兆可能要几秒，而启动不该等它；此刻还没有任何窗口，缓存里也没有人在读的字节。
+     * 后端版本与插件列表那两路要等渲染层拿到（它们经 IPC 报回来，见 registerIpcHandlers）。
+     */
+    void reconcileClientCache(store)
     registerIpcHandlers()
     installAppMenu(() => mainWindow)
 

@@ -20,6 +20,7 @@ import type {
   MiniCommand,
   MiniPlayerSnapshot,
   MiniWindowLayout,
+  RenderCacheReconcileResult,
   ServerEntry,
   ServerProbeResult,
   TraySnapshot,
@@ -28,6 +29,7 @@ import type {
 import type { StoredCredentials } from './bridge-types'
 import type { CastAction, CastRequest, DlnaDevice, DlnaStatus } from './dlna'
 import type { GithubDiscoveryRequest, GithubDiscoveryResult } from './github-discovery'
+import type { RenderCacheRequest } from './render-cache'
 
 export type { StoredCredentials }
 
@@ -152,6 +154,13 @@ export interface SongloftBridge {
     stats(): Promise<LocalCacheStats>
     /** 清掉本机缓存并返回清理后的占用 */
     clear(): Promise<LocalCacheStats>
+    /**
+     * 版本协调：报「后端版本 / 插件列表签名」，与上次记录不同的就由主进程清掉对应会话的缓存。
+     *
+     * 两项**各自独立**（后端版本在登录后拿到、插件列表在它自己加载完才拿到），可以只报其中一项；
+     * 判定规则见 shared/render-cache.ts —— 哪种更新该清哪些会话，那里是唯一的口径。
+     */
+    reconcile(request: RenderCacheRequest): Promise<RenderCacheReconcileResult>
   }
   app: {
     info(): Promise<AppInfo>
