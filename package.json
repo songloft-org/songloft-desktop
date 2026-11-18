@@ -46,6 +46,7 @@
     "release": "bumpp"
   },
   "dependencies": {
+    "hls.js": "^1.7.4",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

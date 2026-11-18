@@ -32,6 +32,14 @@
  *     时间）→ 再要一次」，旧请求在换 src 的那一刻由浏览器中止；首次也给了足够长的预算
  *     （慢插件解析要 9 秒上下）。
  *
+ * ★ **HLS 电台有两条输出通道**（见 state/hls-source）：Chromium 桌面版不支持
+ *   `<audio>` 直接播 m3u8，所以 `.m3u8` 地址先交给 hls.js（MSE）；hls.js 这条路走不通
+ *   （没有 MSE / 跨域 / 编码不受支持）时，下一次换源改请服务端用 ffmpeg 转一条 mp3 裸流
+ *   （`radio_transcode=mp3`）。两条路都在换源链里，只是出口不同：
+ *     第一次        → hls.js 自己解（不占服务端 CPU、音质原样）
+ *     之后每一次    → 服务端转 mp3（只要能转就一定能放）
+ *   环境没有 MSE 时第一次就直接走服务端，不白下载那几百 KB 的 hls.js。
+ *
  * ★ **预热下一首**（见 state/song-prefetch）：起播成功后请后端把队列里的下一首提前解析 +
  *   下载 + 转码，下一次点播直接命中缓存。这与上面的重试是两件事：一个治「等太久」，一个
  *   治「等到了却是坏的」。
@@ -62,6 +70,7 @@ import { orderForMode } from './play-order'
 import { resourceContext, useAuth } from './useAuth'
 import { useSettings } from './useSettings'
 import { resetPrefetch, schedulePrefetch } from './song-prefetch'
+import { hlsChannel, isHlsUrl, supportsHls } from './hls-source'
 
 const EMPTY_LYRIC: ParsedLyric = { lines: [], synced: false, meta: {}, offset: 0 }
 
@@ -192,6 +201,9 @@ let loadedSongId = -1
 
 /** 卸掉本机音频（取消投送时用）：之后再点播放会重新加载当前这一首。 */
 export function unloadLocalAudio(): void {
+  // 在途的那一次加载（HLS 要先 import）作废：它回来时不该再往 audio 上挂东西
+  loadToken += 1
+  hlsChannel.stop()
   loadedSongId = -1
   expectedSrc = ''
   audio.removeAttribute('src')
@@ -283,12 +295,26 @@ function updateMediaSession(song: Song, playing: boolean): void {
   navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
 }
 
+/**
+ * 现在这一首是不是直播。
+ *
+ * ★ 直播没有「整首时长」这回事：裸流的 `audio.duration` 是 Infinity，而 HLS 走 MSE 时
+ *   Chromium 给的是一个**随缓冲增长**的有限值（6s → 9s → 12s…），照实写进界面就成了
+ *   「0:11 / 0:18」——看着像一个只有 18 秒的曲子。所以直播一律按 0 处理（底栏显示 --:--）。
+ */
+function isLiveNow(): boolean {
+  const song = playerCore.getState().currentSong()
+  return song?.type === 'radio' || song?.is_live === true
+}
+
 function updatePositionState(): void {
   if (
     !('mediaSession' in navigator) ||
     typeof navigator.mediaSession.setPositionState !== 'function'
   )
     return
+  // 直播没有位置可言：报一个假的 duration 会让 MPRIS / 系统媒体控件的进度条乱跳
+  if (isLiveNow()) return
   if (!Number.isFinite(audio.duration) || audio.duration <= 0) return
   try {
     navigator.mediaSession.setPositionState({
@@ -355,6 +381,22 @@ let accountedSong = -1
 let consecutiveFailures = 0
 let sourceTimer: number | null = null
 let pendingSwitch: { songId: number; attempt: number; timer: number } | null = null
+/**
+ * 「当前这一次加载」的世代号。
+ *
+ * ★ HLS 让换源变成**异步**的（要先动态 import hls.js），await 期间用户完全可能已经切歌 /
+ *   清空队列。回来的那一趟不该再去碰 audio —— 否则它会把新歌的地址覆盖成旧歌的。
+ */
+let loadToken = 0
+
+/**
+ * 正在换源的那一瞬。
+ *
+ * ★ hls.js 的 `destroy()` 会摘掉 media 上的地址，浏览器随后补一个 `pause` 事件。那不是
+ *   用户按的暂停 —— 它会把刚摆好的「正在获取音源… / 正在切换第 N 个音源…」连同加载态
+ *   一起收掉，于是底栏在最该说话的时候是空白。换源期间只认 `playing: false` 这一位。
+ */
+let switchingSource = false
 
 /**
  * 起播后多久还没出声，就认定这个音源不行。
@@ -409,6 +451,17 @@ const MAX_CONSECUTIVE_FAILURES = 3
 /** 这一次收听最多试几个音源（首次 + 切换） */
 function maxAttemptsFor(song: Song): number {
   return song.type === 'local' ? MAX_LOCAL_PLAY_ATTEMPTS : MAX_SOURCE_SWITCHES + 1
+}
+
+/**
+ * 这一首要不要走 HLS 通道。
+ *
+ * 判据只看后端给的那条播放地址：HLS 电台的 `song.url` 被刻意写成
+ * `/api/v1/songs/{id}/play.m3u8`（songloft 的 `Song.PlaybackURL()`，为原生播放器按后缀
+ * 识别媒体类型而加），所以客户端不必再猜 type / format。
+ */
+function isHlsSong(song: Song): boolean {
+  return isHlsUrl(song.url ?? song.source_url ?? '')
 }
 
 /**
@@ -515,6 +568,45 @@ export const playerCore = create<PlayerState>((set, get) => {
   }
 
   /**
+   * 把一条播放地址挂到 audio 上 —— HLS 走 hls.js（MSE），其余直接设 `src`。
+   *
+   * `asHls` 由调用方决定，而不是从这里看 URL 后缀：服务端转码的回落地址同样以 `.m3u8`
+   * 结尾（`/songs/{id}/play.m3u8?radio_transcode=mp3`），只看后缀会把它又塞回 hls.js。
+   *
+   * ★ 这里是**唯一**写 `audio.src` / `expectedSrc` 的地方（另一处是恢复上次队列时的预载，
+   *   它只为普通歌曲服务，见 restoreLastQueue）：HLS 模式下 `audio.src` 归 hls.js 管，
+   *   两边各写一遍必然会互相覆盖。
+   */
+  async function applySource(song: Song, url: string, asHls: boolean): Promise<void> {
+    // 见 switchingSource：这一小段里浏览器补的 pause 事件不该把加载提示收掉
+    switchingSource = true
+    try {
+      if (asHls) {
+        const taken = await hlsChannel.load(audio, url, (_failure, detail) => {
+          // 迟到的失败（用户已经切歌）：不该算到新歌头上
+          if (get().currentSong()?.id !== song.id) return
+          handlePlaybackFailure(song, detail)
+        })
+        if (taken) {
+          /*
+           * HLS 模式下 audio.src 是 MSE 给的 blob:，与逻辑地址比不出东西 —— 清空「期望地址」，
+           * error 事件那边的比较会靠 hlsChannel.isActive() 跳过。
+           */
+          expectedSrc = ''
+          return
+        }
+        // 环境干不了（没有 MSE / 包没加载下来）：落到下面那条普通路径，失败后由换源链转服务端
+      }
+      hlsChannel.stop()
+      audio.src = url
+      // 读回来的是 DOM 解析过的绝对地址 —— 与 error 事件里的 audio.src 才是同一口径
+      expectedSrc = audio.src
+    } finally {
+      switchingSource = false
+    }
+  }
+
+  /**
    * 真正把某首歌灌进 audio 元素。
    *
    * `attempt` 是「这首歌正在试第几个音源」（0 = 首次）。报错或超时由 handlePlaybackFailure
@@ -537,6 +629,9 @@ export const playerCore = create<PlayerState>((set, get) => {
     if (castBridge) {
       clearSourceTimer()
       cancelPendingSwitch()
+      // 投送时本机彻底不出声：HLS 通道也要摘掉，否则 hls.js 会继续替我们拉切片
+      loadToken += 1
+      hlsChannel.stop()
       requestedTrack = undefined
       accountedSong = -1
       set({
@@ -579,12 +674,23 @@ export const playerCore = create<PlayerState>((set, get) => {
       // 「换个出口继续」不算新的一次收听：不重置记账，历史里就不会为同一首再记一条
       if (options.account !== false) accountedSong = -1
     }
+    /*
+     * ★ 电台 HLS 的两条路（见文件头）：第一次交给 hls.js 自己解；之后（hls.js 已经失败过）
+     *   改请服务端转一条 mp3 裸流。环境没有 MSE 时第一次就直接走服务端 —— 反正 hls.js
+     *   也放不出来，不必白下载那几百 KB。
+     * ★ 只有后端自己的播放地址能这么回落（`/songs/{id}/play…`，相对路径）：外链 HLS 后端
+     *   不参与转发，只能一直用客户端这条通道（见 lib/url 的 transcodes 判断）。
+     */
+    const hlsSong = isHlsSong(song)
+    const servedByBackend = (song.url ?? song.source_url ?? '').startsWith('/')
+    const radioTranscode = hlsSong && servedByBackend && (!supportsHls() || attempt > 0)
     const url = buildSongUrl(song, resourceContext(), {
       quality: settings.quality,
       normalize: settings.volumeNormalize,
       track: requestedTrack,
       // 换源时换一个地址：绕开浏览器对同一 URL 的缓存复用，确保真的重新去后端解析一次
-      retry: attempt
+      retry: attempt,
+      radioTranscode
     })
     if (!url) {
       set({ error: '这首歌没有可播放的地址', status: null, buffering: false, playing: false })
@@ -612,9 +718,11 @@ export const playerCore = create<PlayerState>((set, get) => {
         ? { lyrics: EMPTY_LYRIC, lyricsLoading: true, tracks: [], activeTrack: -1 }
         : {})
     })
-    audio.src = url
-    // 读回来的是 DOM 解析过的绝对地址 —— 与 error 事件里的 audio.src 才是同一口径
-    expectedSrc = audio.src
+    // 在途的那一次加载（HLS 要先动态 import）从这一刻起作废
+    const token = ++loadToken
+    await applySource(song, url, hlsSong && !radioTranscode)
+    // await 期间用户切了歌 / 清了队列：这一趟不该再往 audio 上挂任何东西
+    if (token !== loadToken) return
     loadedSongId = song.id
     /*
      * 用 **store 里那一份**音量，不是设置里那份：取消投送时 `restoreLocalOutput` 把本机
@@ -878,7 +986,10 @@ export const playerCore = create<PlayerState>((set, get) => {
     updatePositionState()
   })
   audio.addEventListener('durationchange', () => {
-    set({ duration: Number.isFinite(audio.duration) ? audio.duration : 0 })
+    const song = get().currentSong()
+    // 直播按 0 处理：HLS 走 MSE 时 Chromium 报的是一个随缓冲增长的有限值（见 isLiveNow）
+    const live = song?.type === 'radio' || song?.is_live === true
+    set({ duration: !live && Number.isFinite(audio.duration) ? audio.duration : 0 })
   })
   /*
    * 真出声了：撤掉起播超时的表，并把「正在获取音源 / 切换音源」那几句一次收掉。`error` 在
@@ -901,7 +1012,11 @@ export const playerCore = create<PlayerState>((set, get) => {
      *   「用户真的按了暂停」走的是 pause()/toggle() 两个动作，它们在那里显式取消换源。
      */
     clearSourceTimer()
-    set(pendingSwitch ? { playing: false } : { playing: false, buffering: false, status: null })
+    set(
+      pendingSwitch || switchingSource
+        ? { playing: false }
+        : { playing: false, buffering: false, status: null }
+    )
     // 通过暂停操作（而非自动播放）也要同步到托盘与系统媒体控件
     const song = get().currentSong()
     if (song) {
@@ -928,8 +1043,12 @@ export const playerCore = create<PlayerState>((set, get) => {
     void step(1, true)
   })
   audio.addEventListener('error', () => {
-    // 重试时旧地址的失败会迟到：只认「此刻期望在放的那一个」（见 expectedSrc 的说明）
-    if (expectedSrc && audio.src !== expectedSrc) return
+    /*
+     * 重试时旧地址的失败会迟到：只认「此刻期望在放的那一个」（见 expectedSrc 的说明）。
+     * ★ HLS 通道下 `audio.src` 是 MSE 给的 blob:，跟逻辑地址比不出东西 —— 那条路上的致命
+     *   错误由 hls.js 自己报（见 applySource 的 onFatal），这里只守普通 `src` 这一条路。
+     */
+    if (!hlsChannel.isActive() && expectedSrc && audio.src !== expectedSrc) return
 
     /*
      * code 1 = MEDIA_ERR_ABORTED：加载是被**我们自己**中止的（换 src / 切歌 / 暂停），
@@ -1067,8 +1186,12 @@ export const playerCore = create<PlayerState>((set, get) => {
     next: async (auto = false) => step(1, auto),
 
     previous: async () => {
-      // 播过 5 秒以上先回到开头，这是播放器的通用约定
-      if (get().currentTime > 5) {
+      /*
+       * 播过 5 秒以上先回到开头，这是播放器的通用约定。
+       * ★ HLS 直播没有「开头」：它的时间轴只有一小段直播窗口，seek 到 0 会落到窗口外，
+       *   hls.js 只能报错或傻等。这种情形直接按「上一首」处理。
+       */
+      if (get().currentTime > 5 && !hlsChannel.isActive()) {
         if (castBridge) {
           castBridge.seek(0)
           set({ currentTime: 0 })
@@ -1242,6 +1365,9 @@ export const playerCore = create<PlayerState>((set, get) => {
       // 队列没了就没有「下一首」可预热，退避中的换源也不该再发生
       cancelPendingSwitch()
       resetPrefetch()
+      // 在途的那一次加载作废；HLS 通道也要摘掉 —— 它的 destroy 才会停止拉切片
+      loadToken += 1
+      hlsChannel.stop()
       audio.pause()
       audio.removeAttribute('src')
       clearSourceTimer()
@@ -1293,9 +1419,12 @@ export const playerCore = create<PlayerState>((set, get) => {
       const wasPlaying = !audio.paused
       // 切轨要打断的可能正是「退避中的换源」：那条路安排的重试属于上一轨，作废
       cancelPendingSwitch()
-      audio.src = url
-      // 换了 src 就要把「期望地址」一起换掉，否则这一轨自己失败时会被 error 处理当成旧地址的迟到错误
-      expectedSrc = audio.src
+      // 换源走统一入口：它会先把 HLS 通道摘掉，再设 src 与新的「期望地址」
+      // （多轨只存在于本地/网络歌曲，电台没有音轨 —— 所以这里一律按普通 src 挂）
+      const token = ++loadToken
+      await applySource(song, url, false)
+      // 挂载期间用户已经切歌：这一轨不该再把 audio / 定时器往新歌头上套
+      if (token !== loadToken) return
       // 切轨是一次新的尝试：计数归零，让这一轨也享有一整条候选链；起播超时表同样要重新上
       currentAttempt = 0
       armSourceTimer(song, 0)
@@ -1341,9 +1470,19 @@ export const playerCore = create<PlayerState>((set, get) => {
             quality: settings.quality,
             normalize: settings.volumeNormalize
           })
-          audio.src = url
-          // 与 startSong 同一套记账：这里也是「准备好一首但不播」，之后 play() 失败时要能按链换源
-          expectedSrc = audio.src
+          hlsChannel.stop()
+          /*
+           * ★ HLS 电台**不预载**：hls.js 一挂上就会去拉清单与切片（直播没有「缓冲够了就停」
+           *   这一说），而这里只是「恢复上次队列、停在暂停态」。把地址留给用户点播放时
+           *   再加载 —— `loadedSongId` 保持 -1，toggle 那边认得出来「本机还没载入这一首」。
+           */
+          if (isHlsSong(song)) {
+            expectedSrc = ''
+          } else {
+            audio.src = url
+            // 与 startSong 同一套记账：这里也是「准备好一首但不播」，之后 play() 失败时要能按链换源
+            expectedSrc = audio.src
+          }
           currentAttempt = 0
           audio.volume = settings.volume
           updateMediaSession(song, false)

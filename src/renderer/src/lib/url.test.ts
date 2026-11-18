@@ -26,6 +26,7 @@ import {
   buildSongQuery,
   buildSongUrl,
   prefetchSongPath,
+  stripHlsSuffix,
   transcodeFormatFor
 } from './url'
 
@@ -261,6 +262,47 @@ describe('buildSongQuery', () => {
 
   it('track 与 format 仍然互斥', () => {
     expect(buildSongQuery(song({ format: 'wma' }), { track: 0 })).toBe('track=0')
+  })
+
+  it('电台回落（服务端转 mp3）追加 radio_transcode=mp3', () => {
+    expect(buildSongQuery(song({ type: 'radio' }), { radioTranscode: true })).toBe(
+      'radio_transcode=mp3'
+    )
+    expect(buildSongQuery(song({ type: 'radio' }))).toBe('')
+  })
+})
+
+describe('HLS 电台的回落地址', () => {
+  const radio = song({ id: 9, type: 'radio', url: '/api/v1/songs/9/play.m3u8' })
+
+  it('回落时要去掉 .m3u8 后缀 —— 否则 Chromium 按后缀当 HLS 播放列表直接拒播', () => {
+    expect(buildSongUrl(radio, ctx, { radioTranscode: true })).toBe(
+      `http://localhost:58091/api/v1/songs/9/play?${TOKEN_QS}&radio_transcode=mp3`
+    )
+  })
+
+  it('不回落时后缀原样保留（hls.js 要的就是这条）', () => {
+    expect(buildSongUrl(radio, ctx)).toBe(
+      `http://localhost:58091/api/v1/songs/9/play.m3u8?${TOKEN_QS}`
+    )
+  })
+
+  it('query 与 hash 不参与去后缀', () => {
+    expect(stripHlsSuffix('http://h/a/play.m3u8?x=1.m3u8#y.m3u8')).toBe(
+      'http://h/a/play?x=1.m3u8#y.m3u8'
+    )
+    expect(stripHlsSuffix('http://h/a/play.m3u?x=1')).toBe('http://h/a/play?x=1')
+    expect(stripHlsSuffix('http://h/a/play.mp3')).toBe('http://h/a/play.mp3')
+  })
+
+  it('外链 HLS 不参与服务端转码：地址原样（后端不转发它，去后缀只会 404）', () => {
+    const external = song({
+      id: 3,
+      type: 'remote',
+      url: null,
+      source_url: 'https://cdn.example/x.m3u8'
+    })
+    expect(buildSongUrl(external, ctx, { radioTranscode: true })).toBe('https://cdn.example/x.m3u8')
   })
 })
 

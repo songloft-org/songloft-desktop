@@ -86,6 +86,15 @@ export interface SongUrlOptions {
    * 「同一个地址再拉一遍」有可能连请求都不发就复现同一次失败，而我们要的是**重新解析**。
    */
   retry?: number
+  /**
+   * 电台专用：请服务端把同一条流（HLS 或裸流）用 ffmpeg 实时转成 MP3 裸流。
+   *
+   * ★ 这是 HLS 通道（state/hls-source 的 hls.js）**走不通时的回落**：客户端自己解不了
+   *   （没有 MSE）或者解不开（跨域 / 编码不受支持）时，改让后端吐一条 `<audio>` 一定能放的流。
+   *   代价是服务端要常驻一条 ffmpeg，且是重编码 —— 所以只在回落时才带，首次播放不带。
+   * ★ 后端把 `format` 与它刻意分离（电台侧一律忽略 format，只认这个参数），别混用。
+   */
+  radioTranscode?: boolean
 }
 
 /**
@@ -96,7 +105,7 @@ export interface SongUrlOptions {
  */
 export function buildSongQuery(song: Song, options: SongUrlOptions = {}): string {
   const params: string[] = []
-  const { track, quality, normalize, retry } = options
+  const { track, quality, normalize, retry, radioTranscode } = options
   if (track != null && track >= 0) {
     params.push(`track=${track}`)
   } else {
@@ -106,7 +115,30 @@ export function buildSongQuery(song: Song, options: SongUrlOptions = {}): string
   if (quality && quality !== 'original') params.push(`quality=${quality}`)
   if (normalize) params.push('normalize=1')
   if (retry != null && retry > 0) params.push(`retry=${retry}`)
+  /*
+   * 放在最后：既有断言比的是「前面那些参数的顺序与拼法」，新参数追加在尾部时它们一个字都不用改。
+   * 只对电台有意义 —— 后端对本地/网络歌曲忽略它，所以这里不额外判断 song.type。
+   */
+  if (radioTranscode) params.push('radio_transcode=mp3')
   return params.join('&')
+}
+
+/**
+ * 去掉地址里的 HLS 后缀（`…/play.m3u8` → `…/play`），path 以外（query / hash）原样保留。
+ *
+ * ★ 为什么服务端转码的回落必须走它：Chromium 会**按 URL 后缀**猜媒体类型，`.m3u8` 一律
+ *   当成 HLS 播放列表 —— 即使后端 302 到一条 mp3 裸流，也会在跟随重定向之前就判
+ *   `MEDIA_ERR_SRC_NOT_SUPPORTED`（实测：同一条流换个不带后缀的地址就正常出声）。
+ *   后端 `/songs/{id}/play` 与 `/songs/{id}/play.m3u8` 是同一个处理器，改名不影响语义。
+ */
+export function stripHlsSuffix(url: string): string {
+  const hashAt = url.indexOf('#')
+  const head = hashAt >= 0 ? url.slice(0, hashAt) : url
+  const hash = hashAt >= 0 ? url.slice(hashAt) : ''
+  const queryAt = head.indexOf('?')
+  const path = queryAt >= 0 ? head.slice(0, queryAt) : head
+  const query = queryAt >= 0 ? head.slice(queryAt) : ''
+  return `${path.replace(/\.m3u8?$/i, '')}${query}${hash}`
 }
 
 /**
@@ -137,10 +169,18 @@ export function buildSongUrl(
     const retry = options.retry ?? 0
     return retry > 0 ? `${source}?retry=${retry}` : source
   }
-  const result = buildResourceUrl(source, ctx)
-  if (!result) return ''
+  const resolved = buildResourceUrl(source, ctx)
+  if (!resolved) return ''
+  /*
+   * 服务端转码只对**后端自己的播放地址**成立（`/songs/{id}/play…` 这种相对路径）。
+   * 外链 HLS（`https://cdn/x.m3u8`）后端不参与转发，带上参数没用，去掉后缀还会直接 404 ——
+   * 那种源只能靠客户端自己的 hls.js 解。
+   */
+  const transcodes = options.radioTranscode === true && source.startsWith('/')
+  // 回落成服务端转码的裸流时，后缀必须去掉（见 stripHlsSuffix）
+  const result = transcodes ? stripHlsSuffix(resolved) : resolved
 
-  const query = buildSongQuery(song, options)
+  const query = buildSongQuery(song, transcodes ? options : { ...options, radioTranscode: false })
   if (!query) return result
   return `${result}${result.includes('?') ? '&' : '?'}${query}`
 }

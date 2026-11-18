@@ -34,11 +34,14 @@ Songloft 音乐播放器的 **Electron 桌面客户端**。
 | 构建 | electron-vite / vite | `5.0.0` / `7.3.7` |
 | 界面 | React + TypeScript | `19.3.0` / `6.0.3` |
 | 状态 | zustand | `5.0.15` |
+| 音频 | hls.js（**只给电台 HLS 用，动态加载**） | `1.7.4` |
 | 测试 | vitest | `5.0.4` |
 | 打包 | electron-builder | `26.15.3` |
 | 规范 | ESLint（flat config）/ Prettier | `10.12.0` / `3.9.10` |
 
-**运行期依赖只有 `zustand` 一个** —— 其余全在 `devDependencies`。加新依赖前先问自己能不能不加。
+**运行期依赖只有 `zustand` 与 `hls.js` 两个** —— 其余全在 `devDependencies`。
+hls.js 只为「Chromium 桌面版不支持 `<audio>` 直接播 HLS」而存在（见 §5.3），
+且走**动态 import**：普通歌曲一个字节都不加载它。加新依赖前先问自己能不能不加。
 
 ---
 
@@ -140,6 +143,7 @@ src/
    │                 plugins.ts（JS 插件：列表 / 启停 / 卸载 / 顺序 / 商店）
    ├─ state/         useAuth / usePlayer / usePlaylists / useSettings / useUi / useToasts /
    │                 player-core（**播放核心**：音频 / 队列 / 歌词 / 音轨 —— 与窗口形态无关）/
+   │                 hls-source（电台 HLS 的播放通道：hls.js 动态加载 + 失败分类，见 §5.3）/
    │                 remotePlayer（宿主的镜像）/ usePlayer（按窗口角色分流，见 §8.17）/
    │                 mini-host（宿主推快照 + 接遥控命令）/
    │                 local-session（**本地文件会话**的启动编排：迷你宿主窗靠它起播，见 §8.17）/
@@ -271,6 +275,12 @@ src/
 3. **播放**走 `HTMLAudioElement` + **Media Session API**。Chromium 会把它自动映射成 Linux 的
    MPRIS / Windows 的 SMTC / macOS 的 Now Playing，**不需要**为每个平台写原生桥。
    键盘媒体键另走 `globalShortcut` 兜底。
+   **唯一例外是 HLS 电台**：Chromium 桌面版不支持 `<audio src="…m3u8">`（只有 Android
+   Chrome / Safari 自带解析），而后端对 HLS 电台返回的恰好是 `/songs/{id}/play.m3u8`。
+   于是 `state/hls-source.ts` 用 hls.js（MSE）接管这一路，`.m3u8` 之外一条都不碰；
+   它走不通时（没有 MSE / 跨域 / 编码不受支持）换源链会请服务端转一条 mp3 裸流
+   （`radio_transcode=mp3`，地址要去掉 `.m3u8` 后缀 —— Chromium 按后缀判协议，见 `lib/url`）。
+   无 CORS 的源靠服务端「HLS 代理」开关兜底，客户端只负责如实报错并提示这个开关。
 4. **媒体地址带 `access_token` 查询参数**（`lib/url.ts`）：封面/音频是交给 `img` / `audio` 直接请求的，
    走不了带 `Authorization` 头的 fetch 封装。
 5. **封面取主色由主进程代取字节**（`cover:extract`）：渲染层直接读跨域 `canvas` 会污染画布。
@@ -852,7 +862,7 @@ Linux 的文件关联把路径追加在 argv 里）、macOS 的 `open-file` 事�
 
 为什么必须在主进程而不是渲染层：SSDP 要往 `239.255.255.250:1900` 发 **UDP 组播**，
 渲染层是浏览器上下文，开不了 socket。主进程就是 Node，`dgram` + `fetch` 够用，
-不需要任何原生依赖（运行期依赖只有 zustand 这一条得守住）。
+不需要任何原生依赖（运行期依赖只有 zustand 与 hls.js 两条，后者与投送无关）。
 
 ★ 那音箱拉的流从哪来：**就是那条一直存在的播放地址**（`/songs/{id}/play?access_token=…`，
 `<audio>` 一直用的同一条）。所以音频地址由**渲染层**用 `buildSongUrl` 拼好再经 IPC 传给主进程 ——
