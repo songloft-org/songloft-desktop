@@ -80,7 +80,7 @@ function describe(failure: HlsFailure): string {
 }
 
 /**
- * 一个进程只有一条输出通道（与 player-core 的那个 `HTMLAudioElement` 对应），所以这里也是单例。
+ * 一个进程只有一条输出通道（与 player-core 那颗媒体元素对应），所以这里也是单例。
  *
  * 生命周期约定：**换源之前先 `stop()`**。hls.js 的 `destroy()` 会自己摘掉 media 上的
  * object URL，所以紧接着设 `audio.src = …` 不会撞车。
@@ -104,7 +104,9 @@ class HlsChannel {
    * ★ 不等 playlist 解析完：起播预算由 player-core 的超时表管（见 sourceTimeoutFor），
    *   而解析失败会走 `onFatal` → 换源链，比在这里再堆一套超时更简单，也不会与它打架。
    */
-  async load(audio: HTMLAudioElement, url: string, onFatal: HlsFatalHandler): Promise<boolean> {
+  // 参数是 HTMLMediaElement 而不是 HTMLAudioElement：视频电台要挂到 `<video>` 上
+  // （见 state/player-core 那颗媒体元素）。hls.js 的 attachMedia 本来就只认这个父类型。
+  async load(audio: HTMLMediaElement, url: string, onFatal: HlsFatalHandler): Promise<boolean> {
     this.stop()
     if (!supportsHls()) return false
 

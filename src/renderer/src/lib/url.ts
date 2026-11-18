@@ -95,6 +95,17 @@ export interface SongUrlOptions {
    * ★ 后端把 `format` 与它刻意分离（电台侧一律忽略 format，只认这个参数），别混用。
    */
   radioTranscode?: boolean
+  /**
+   * 视频歌曲（`song.is_video`）：要画面，不要任何服务端转码。
+   *
+   * ★ 为什么不能只加个参数、别的照旧：后端 `GetSongPlay` 一看到 `media=video` 就把
+   *   targetFormat / bitrate 清掉，并关掉 track / normalize / seek / speed —— 那些参数
+   *   背后的每一条转码链都写死了 `-vn`，带上任意一个都会把画面扔掉（见 songloft 的
+   *   `music.go` 的 videoIntent 分支）。所以这一档只带 `media=video`（+ retry）。
+   * ★ 对电台它是**无害透传**：`serveRadio` 不吃播放参数，画面靠播放器自己解流里的视频轨。
+   *   与 Flutter 端 `UrlHelper.buildVideoUrl` 同一口径。
+   */
+  mediaVideo?: boolean
 }
 
 /**
@@ -104,8 +115,17 @@ export interface SongUrlOptions {
  *   均衡」算缓存键，两边差一项就会预热出一份谁也命中不了的缓存。
  */
 export function buildSongQuery(song: Song, options: SongUrlOptions = {}): string {
+  const { track, quality, normalize, retry, radioTranscode, mediaVideo } = options
+  /*
+   * 视频歌曲只有这一种拼法（见 mediaVideo 的说明）：带别的参数都会让后端转码丢画面。
+   * retry 留着 —— 它只为「换个地址重新解析」服务，与编解码无关。
+   */
+  if (mediaVideo) {
+    const videoParams = ['media=video']
+    if (retry != null && retry > 0) videoParams.push(`retry=${retry}`)
+    return videoParams.join('&')
+  }
   const params: string[] = []
-  const { track, quality, normalize, retry, radioTranscode } = options
   if (track != null && track >= 0) {
     params.push(`track=${track}`)
   } else {
@@ -176,8 +196,9 @@ export function buildSongUrl(
    * 外链 HLS（`https://cdn/x.m3u8`）后端不参与转发，带上参数没用，去掉后缀还会直接 404 ——
    * 那种源只能靠客户端自己的 hls.js 解。
    */
-  const transcodes = options.radioTranscode === true && source.startsWith('/')
-  // 回落成服务端转码的裸流时，后缀必须去掉（见 stripHlsSuffix）
+  const transcodes =
+    options.radioTranscode === true && options.mediaVideo !== true && source.startsWith('/')
+  // 回落成服务端转码的裸流时，后缀必须去掉（见 stripHlsSuffix）；视频要靠 .m3u8 走 hls.js
   const result = transcodes ? stripHlsSuffix(resolved) : resolved
 
   const query = buildSongQuery(song, transcodes ? options : { ...options, radioTranscode: false })
@@ -196,6 +217,12 @@ export function buildSongUrl(
  */
 export function prefetchSongPath(song: Song, options: SongUrlOptions = {}): string | null {
   if (song.id <= 0 || song.type === 'local') return null
+  /*
+   * 视频歌曲不预热：预热路径不带 `media=video`，后端会按音频转一份（`-vn`）出来 ——
+   * 那份缓存既放不出画面，也不是真实播放会请求的地址，纯属白下一份（与 Flutter 端
+   * 「视频不走 LockCachingAudioSource」同一个道理）。
+   */
+  if (song.is_video) return null
   const source = song.url ?? song.source_url ?? ''
   if (!source.startsWith('/')) return null
   const query = buildSongQuery(song, options)

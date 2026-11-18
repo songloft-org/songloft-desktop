@@ -245,7 +245,7 @@ export function LyricsView({ compact = false }: { compact?: boolean }): React.JS
       style={{ fontSize }}
     >
       {lyrics.lines.map((line, index) => (
-        <LyricRow
+        <LyricLineView
           key={`${line.time}-${index}`}
           line={line}
           active={index === activeIndex}
@@ -263,7 +263,7 @@ export function LyricsView({ compact = false }: { compact?: boolean }): React.JS
   )
 }
 
-interface LyricRowProps {
+interface LyricLineViewProps {
   line: LyricLine
   active: boolean
   activeWordIndex: number
@@ -274,7 +274,14 @@ interface LyricRowProps {
   ref?: React.Ref<HTMLDivElement>
 }
 
-function LyricRow({
+/**
+ * 一行歌词。
+ *
+ * 导出是为了**视频字幕**复用同一份渲染（见 components/VideoStage）：视频时整块歌词列表
+ * 被画面替换，只剩这一行叠加在画面上 —— 逐字高亮、译音那几档显示偏好必须与歌词页
+ * 一模一样，另写一份迟早只改一边。
+ */
+export function LyricLineView({
   line,
   active,
   activeWordIndex,
@@ -283,7 +290,7 @@ function LyricRow({
   synced,
   onClick,
   ref
-}: LyricRowProps): React.JSX.Element {
+}: LyricLineViewProps): React.JSX.Element {
   return (
     <div
       ref={ref}

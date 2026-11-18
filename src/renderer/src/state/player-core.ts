@@ -1,20 +1,23 @@
 /**
- * **播放核心**：一个模块级的 `HTMLAudioElement` + zustand 状态。
+ * **播放核心**：一个模块级的媒体元素（`<video>`）+ zustand 状态。
  *
  * ★ 音频、队列、游标、歌词、音轨、音量全在这里，而它**不知道自己跑在哪个窗口里** ——
  *   这正是它与 state/remotePlayer.ts 的分工：谁当**宿主**谁用它，另一侧用镜像，两边靠
  *   IPC 对齐。至于「谁是宿主」只有两种答案（见 @shared/window-role）：
  *     · 主窗口 —— 完整界面那个窗口；
  *     · 迷你窗 · 宿主 —— 本地文件会话（双击音频文件）里，迷你窗自己就是播放器，没有主窗口。
- *   一首歌只能有一个 `HTMLAudioElement` 在放（两个窗口各放一份就是同一首歌响两遍），
+ *   一首歌只能有一个媒体元素在放（两个窗口各放一份就是同一首歌响两遍），
  *   所以**同一个进程里**永远只有一侧用它，见 state/usePlayer 那句模块级分流。
  *
  * ★ 于是这个模块里不许出现「主窗口才有的东西」：曲库、会话、页面路由、扩展 webview 一个
  *   都不碰（要用到的会话只经 resourceContext() 问一句「现在拿得到地址和 token 吗」，
  *   拿不到就按没有会话处理）。本地文件会话里它照样要能完整地放音频。
  *
- * 一个模块级的 `HTMLAudioElement` + zustand 状态，刻意不用 React 的 ref：
- * 切歌、切页面、抽屉开关都不该重建音频元素（重建 = 断流 + 丢失缓冲）。
+ * 一个模块级的媒体元素 + zustand 状态，刻意不用 React 的 ref：
+ * 切歌、切页面、抽屉开关都不该重建媒体元素（重建 = 断流 + 丢失缓冲）。
+ *
+ * ★ **视频电台（`is_video`）用的是同一颗元素**，见下面 `const audio` 那条注释 ——
+ *   这里不存在「音频一路、视频一路」两套管线，也就没有对齐两路时间的问题。
  *
  * ★ 播放失败不是「立刻跳下一首」，而是**换一个音源**（重新向后端要一次地址）：坏的是那个
  *   音源，而找别的音源只有后端做得到（它才有插件、才有跨插件搜索）。客户端在这里只做两件
@@ -137,8 +140,48 @@ export interface PlayerState {
   refreshCurrentSong: () => Promise<void>
 }
 
-const audio = new Audio()
+/**
+ * 那颗媒体元素 —— 是 `<video>`，不是 `<audio>`。
+ *
+ * ★ 为什么：视频电台要出画面，而画面只能由**正在出声的那个元素**渲染。另起一个 `<video>`
+ *   再对齐 `currentTime` 会漂（原版 Web 端「静音 video + just_audio」那种双元素方案正是
+ *   踩过这个，后来改回单元素同时出音出画，见 songloft-player 的 audio_service 与
+ *   web_video_view_web）。
+ * ★ `HTMLVideoElement` 是 `HTMLAudioElement` 的父集：不显示画面时它就是一颗看不见的
+ *   audio（Chromium 里两者本来就是同一套实现），所以音频那条路一个字节都不用改。
+ * ★ 它**不插在 DOM 里**：音频歌曲全程如此；视频歌曲只在满窗播放器打开时由
+ *   components/VideoStage 把它 appendChild 进去，收起时 remove —— 离开 DOM 不会暂停播放，
+ *   所以「收起满窗 = 只停画面，不停声音」是天然的。
+ * ★ 变量名仍叫 `audio`：下面几十处调用与「正在出声的东西」这个语义都指它，改名的收益为零。
+ */
+const audio = document.createElement('video')
 audio.preload = 'auto'
+// 桌面端没有「内联播放」这回事，但移动/嵌入式 webview 里不设它会被要求全屏接管
+audio.playsInline = true
+
+/**
+ * 媒体元素的「家」：一个常驻文档的离屏容器。
+ *
+ * ★ 为什么必须留一个家、而不是收起满窗时 `remove()`：`<video>` 被移出文档时 Chromium 会
+ *   **暂停**它（实测：remove 之后 paused=true、currentTime 不再前进）。而收起满窗只该停
+ *   画面、不该停声音 —— 所以收起是「挪回离屏容器」。同一文档内换父节点不会中断播放
+ *   （实测照旧推进），这也是唯二不打断它的搬运方式。
+ * ★ 它常驻且不挡事：2×2 像素、透明、不吃鼠标（见 components.css 的 .media-holder）。
+ */
+const mediaHolder = document.createElement('div')
+mediaHolder.className = 'media-holder'
+;(document.body ?? document.documentElement).appendChild(mediaHolder)
+mediaHolder.appendChild(audio)
+
+/** 那颗媒体元素（只有 VideoStage 需要：把画面挂到界面上，见 components/VideoStage） */
+export function mediaElement(): HTMLVideoElement {
+  return audio
+}
+
+/** 把画面挪回离屏容器（收起满窗时）—— 不是 remove，见 mediaHolder 的说明 */
+export function parkMediaElement(): void {
+  mediaHolder.appendChild(audio)
+}
 
 /**
  * 「投送」通道。
@@ -683,8 +726,16 @@ export const playerCore = create<PlayerState>((set, get) => {
      */
     const hlsSong = isHlsSong(song)
     const servedByBackend = (song.url ?? song.source_url ?? '').startsWith('/')
-    const radioTranscode = hlsSong && servedByBackend && (!supportsHls() || attempt > 0)
+    /*
+     * ★ 视频歌曲**不做**服务端转码回落：`radio_transcode` 那条链写死 `-vn`，回落进去
+     *   等于把画面永久扔掉，而用户点开的就是画面（与 Flutter 端一致 —— 那边也没有
+     *   「视频失败就退回纯音频」的分支）。解不开就按换源重试，试满如实报错。
+     */
+    const radioTranscode =
+      hlsSong && servedByBackend && !song.is_video && (!supportsHls() || attempt > 0)
     const url = buildSongUrl(song, resourceContext(), {
+      // 视频只带 media=video：其它参数都会让后端走 `-vn` 转码，画面就没了（见 lib/url）
+      mediaVideo: song.is_video,
       quality: settings.quality,
       normalize: settings.volumeNormalize,
       track: requestedTrack,
@@ -1467,16 +1518,20 @@ export const playerCore = create<PlayerState>((set, get) => {
         const song = valid[currentIndex]
         if (song) {
           const url = buildSongUrl(song, resourceContext(), {
+            mediaVideo: song.is_video,
             quality: settings.quality,
             normalize: settings.volumeNormalize
           })
           hlsChannel.stop()
           /*
-           * ★ HLS 电台**不预载**：hls.js 一挂上就会去拉清单与切片（直播没有「缓冲够了就停」
-           *   这一说），而这里只是「恢复上次队列、停在暂停态」。把地址留给用户点播放时
-           *   再加载 —— `loadedSongId` 保持 -1，toggle 那边认得出来「本机还没载入这一首」。
+           * ★ HLS 电台与视频歌曲**都不预载**：
+           *   · HLS 一挂上就会去拉清单与切片（直播没有「缓冲够了就停」这一说）；
+           *   · 视频那条 `preload=auto` 会成片地往下拉，而这里只是「恢复上次队列、停在
+           *     暂停态」—— 一次启动就替用户白下几百 MB 视频，没有道理。
+           * 地址留给用户点播放时再加载 —— `loadedSongId` 保持 -1，toggle 那边认得出来
+           * 「本机还没载入这一首」。
            */
-          if (isHlsSong(song)) {
+          if (isHlsSong(song) || song.is_video) {
             expectedSrc = ''
           } else {
             audio.src = url

@@ -39,6 +39,7 @@ import { LyricsView } from './LyricsView'
 import { MODE_ICON, MODE_LABEL } from './play-mode'
 import { PlayerProgress } from './PlayerProgress'
 import { Cover, EmptyState, Slider } from './primitives'
+import { VideoStage } from './VideoStage'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
 import { useNowPlayingStatus } from '@/hooks/useNowPlayingStatus'
 import { displayArtist, formatDuration } from '@/lib/format'
@@ -64,6 +65,13 @@ export function FullPlayer(): React.JSX.Element {
   const toggleFavorite = usePlaylists((s) => s.toggleFavorite)
   /** 与底栏、迷你条同一份用途：拖动进度时手上的位置（那行时长也跟着走，见 PlayerProgress） */
   const [scrub, setScrub] = useState<number | null>(null)
+  /**
+   * 视频字幕开关（只在 video 那条分支上有意义）。
+   *
+   * ★ 默认**开**：视频时整块歌词列表被画面替换，字幕是歌词唯一的出口 —— 默认关等于
+   *   让用户一进满窗就丢掉歌词（原版顶栏那颗开关的默认值不必照抄，取舍理由在这）。
+   */
+  const [subtitle, setSubtitle] = useState(true)
 
   const song = useMemo(
     () =>
@@ -95,10 +103,12 @@ export function FullPlayer(): React.JSX.Element {
   )
 
   return (
-    <section className="fullplayer" aria-label="满窗播放">
+    <section className="fullplayer" aria-label="满窗播放" data-video={Boolean(song?.is_video)}>
       {/*
         背景：同一张封面糊成的大色块。aria-hidden —— 它是氛围不是内容，
         真正的封面在下面那张（读屏不该把同一张图读两遍）。
+        视频时整层让位给黑底（见 components.css 的 .fullplayer[data-video]）——画面四周
+        露出一点糊封面会很脏，原版视频界面也是整屏黑底。
       */}
       <div
         className="fullplayer-bg"
@@ -117,6 +127,19 @@ export function FullPlayer(): React.JSX.Element {
           <IconChevronDown size={22} />
         </button>
         <div className="grow" />
+        {/* 字幕开关：只有视频那条分支上才有意义（音频那边歌词本来就是整块列表） */}
+        {song?.is_video ? (
+          <button
+            type="button"
+            className="icon-btn"
+            data-active={subtitle}
+            data-tip={subtitle ? '关闭字幕' : '显示字幕'}
+            aria-label="字幕"
+            onClick={() => setSubtitle((v) => !v)}
+          >
+            <span className="cc-mark">CC</span>
+          </button>
+        ) : null}
         {song ? (
           <button
             type="button"
@@ -131,7 +154,16 @@ export function FullPlayer(): React.JSX.Element {
         ) : null}
       </header>
 
-      {song ? (
+      {/*
+        视频歌曲（is_video）整块换成画面 —— 与原版桌面端一致：满窗播放器里「左封面右歌词」
+        被整屏替换，没有「视频 ↔ 歌词/封面」的切换，歌词只剩叠加字幕这一条出口
+        （见 components/VideoStage）。音频歌曲一个像素都不变。
+      */}
+      {song?.is_video ? (
+        <div className="fullplayer-body" data-video="true">
+          <VideoStage subtitle={subtitle} />
+        </div>
+      ) : song ? (
         <div className="fullplayer-body">
           <div className="fullplayer-art">
             <div className="fullplayer-art-box">

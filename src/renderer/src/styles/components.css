@@ -1088,6 +1088,119 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* ── 视频歌曲（is_video）：满窗播放器里的画面 ───────────────────────────────
+ *
+ * ★ 与原版一致的三条：画面**只在满窗播放器**里出现（底栏、队列、迷你窗仍是封面）；
+ *   黑底 + 等比 contain（letterbox，宁留黑边不裁画面）；没有「视频 ↔ 歌词/封面」的切换，
+ *   歌词只剩叠加字幕这一条出口（见 components/VideoStage）。
+ * ★ 媒体元素是播放核心那一颗（append 进来），这里只负责「摆在哪、多大」。
+ */
+
+/* 视频时整屏黑底：画面四周露出糊封面会很脏，原版视频界面也是整屏黑 */
+.fullplayer[data-video='true'] {
+  background: #000;
+}
+
+.fullplayer[data-video='true'] .fullplayer-bg {
+  display: none;
+}
+
+/* 视频那一支不再分两栏：画面吃掉中间整块，控制带仍在 .fullplayer 的第三行 */
+.fullplayer-body[data-video='true'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.video-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  background: #000;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+/*
+ * 媒体元素的「家」：不满窗播放时它待在这里。
+ * ★ 2×2 + 透明 + 不吃鼠标，但**不能 display: none / 移出文档** —— 那会让 Chromium 暂停
+ *   `<video>`（实测），而音频歌曲全程都靠这颗元素出声。见 state/player-core 的 mediaHolder。
+ */
+.media-holder {
+  position: fixed;
+  top: -2px;
+  left: -2px;
+  z-index: -1;
+  width: 2px;
+  height: 2px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 画面本体 = 媒体元素被 append 进来的位置。object-fit: contain 对应原版的 BoxFit.contain */
+.video-stage > video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/*
+ * 字幕：当前歌词行叠在画面底边（原版 video_subtitle_overlay 的口径 —— 白字 + 描边、
+ * 逐字高亮沿用强调色）。桌面这一层的控制带不在画面之上，所以它固定贴在画面内底边，
+ * 不需要像原版那样随控制层让位。
+ */
+.video-subtitle {
+  position: absolute;
+  right: 5%;
+  bottom: 24px;
+  left: 5%;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+  /* 白字压在任意画面上都要读得出来：描边比单层阴影稳 */
+  color: #fff;
+  text-shadow:
+    0 0 2px rgba(0, 0, 0, 0.9),
+    0 1px 3px rgba(0, 0, 0, 0.9),
+    0 0 12px rgba(0, 0, 0, 0.7);
+}
+
+/* 歌词页那一行的 padding / 放大 / 主题色在字幕里都不适用，逐条压回去 */
+.video-subtitle .lyric-line,
+.video-subtitle .lyric-line[data-active='true'] {
+  padding: 0;
+  color: #fff;
+  font-size: 24px;
+  transform: none;
+}
+
+/* 高亮行的那圈光晕属于歌词页（深色底上好看），字幕上叠着会糊成一团 */
+.video-subtitle .lyric-main,
+.video-subtitle .lyric-line[data-active='true'] .lyric-main {
+  text-shadow: none;
+}
+
+.video-subtitle .lyric-word[data-sung='true'] {
+  color: var(--accent);
+}
+
+.video-subtitle .lyric-translation,
+.video-subtitle .lyric-line[data-active='true'] .lyric-translation,
+.video-subtitle .lyric-roman,
+.video-subtitle .lyric-line[data-active='true'] .lyric-roman {
+  color: rgba(255, 255, 255, 0.86);
+}
+
+/* head 里那颗字幕开关：图标位没有对应图形，用两个字母代替（原版是 closed_caption） */
+.cc-mark {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .fullplayer-art {
   display: grid;
   place-items: center;

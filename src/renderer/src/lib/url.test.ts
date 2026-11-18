@@ -306,6 +306,39 @@ describe('HLS 电台的回落地址', () => {
   })
 })
 
+describe('视频歌曲（is_video）的地址', () => {
+  const video = song({
+    id: 12,
+    type: 'remote',
+    url: '/api/v1/songs/12/play',
+    format: 'mp4',
+    is_video: true
+  })
+
+  it('只带 media=video —— 任何一个转码参数都会让后端 -vn 把画面丢掉', () => {
+    expect(
+      buildSongUrl(video, ctx, { mediaVideo: true, quality: '320', normalize: true, track: 1 })
+    ).toBe(`http://localhost:58091/api/v1/songs/12/play?${TOKEN_QS}&media=video`)
+  })
+
+  it('换源时 retry 仍在（与 media=video 并列）', () => {
+    expect(buildSongUrl(video, ctx, { mediaVideo: true, retry: 2 })).toBe(
+      `http://localhost:58091/api/v1/songs/12/play?${TOKEN_QS}&media=video&retry=2`
+    )
+  })
+
+  it('视频电台保留 .m3u8（hls.js 靠后缀接管），也不回落成服务端转码', () => {
+    const radio = song({ id: 13, type: 'radio', url: '/api/v1/songs/13/play.m3u8' })
+    expect(buildSongUrl(radio, ctx, { mediaVideo: true, radioTranscode: true, retry: 1 })).toBe(
+      `http://localhost:58091/api/v1/songs/13/play.m3u8?${TOKEN_QS}&media=video&retry=1`
+    )
+  })
+
+  it('视频不预热：预热路径不带 media=video，后端只会转出一份没画面的缓存', () => {
+    expect(prefetchSongPath(video)).toBeNull()
+  })
+})
+
 describe('prefetchSongPath', () => {
   it('曲库里的网络歌曲：带上与播放一致的参数 + prefetch=1', () => {
     const remote = song({ id: 7, type: 'remote', url: '/api/v1/songs/7/play' })
