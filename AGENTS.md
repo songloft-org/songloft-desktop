@@ -176,7 +176,9 @@ src/
    │                  都只有各自的视图才知道，所以由它们各自把这份页头摆上 —— 标题 + 副标题在第一行，
    │                  动作钮在第二行右端、与来源切换同一行）
    ├─ components/    Sidebar / TitleBar / SongTable / PlayerBar / LyricsView / CommandPalette /
-   │                 Panel / ContextMenu / Modal / Toasts / SelectionBar /
+   │                 Panel / ContextMenu / Modal / Toasts /
+   │                 SelectionBar（多选操作条：手上有歌就先播 / 先入队，全选模式下余下的
+   │                 由 loadSongs 在后台补齐后接在队尾 —— 播放不等整份列表就位）/
    │                 PendingUpdateModal（上次下载好的安装包，启动时问一句要不要装，见 §8.21）/
    │                 Overlay（弹层骨架：定位层 + 遮罩，Modal 与命令面板共用，见 §8.22）/
    │                 FullPlayer（满窗播放：盖在原生面上的浮层）/
@@ -188,7 +190,8 @@ src/
    │                 RegistrySourcesDialog（管理订阅源）/
    │                 GithubDiscoveryCard（发现页的卡片）/ GithubTokenDialog（发现页的凭据）/
    │                 AddRadioDialog（曲库→电台 的「添加电台」表单：地址 / 标题 / 视频内容）
-   ├─ hooks/         useSongList（分页列表：滚动分页 + 「播放全部」用的 loadAll）/
+   ├─ hooks/         useSongList（分页列表：滚动分页 + 「播放全部」用的 loadAll +
+   │                 「全选后播放 / 入队」用的 fetchAll）/
    │                 useRowWindow（长列表的渲染窗口：只挂视口附近几十行，上下用等高空白
    │                 撑住；纯计算在 lib/row-window.ts，有单测）/
    │                 usePlaylistSongs / useAsync / useResponsiveSidebar /

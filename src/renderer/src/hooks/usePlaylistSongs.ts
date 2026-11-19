@@ -35,6 +35,14 @@ export interface PlaylistSongsController {
   /** 就地重排（拖动后调用，避免整表刷新丢掉滚动位置） */
   setSongs: (songs: Song[]) => void
   fetchAllIds: () => Promise<number[]>
+  /**
+   * 取**整份**列表（已在手的 + 余下分页）—— 「全选之后要播放 / 加入队列」那种动作用：
+   * 那两条要的是 Song 对象，而「全选」手上只有 id。
+   *
+   * ★ 没拉全就抛错（取消 / 出错 / 后端没有更多却没到底）：调用方据此提示重试，
+   *   而不是拿一份残缺的列表去播放。
+   */
+  fetchAll: () => Promise<Song[]>
 }
 
 export interface PlaylistSongsOptions {
@@ -65,6 +73,11 @@ export function usePlaylistSongs(
   /** 手头这份列表的镜像：静默刷新与去重都要拿它比对（state 在闭包里是过期的那一份） */
   const songsRef = useRef<Song[]>([])
   const totalRef = useRef(0)
+  /**
+   * 后台「一次拉完」那一轮（见 fetchAll）：null = 现在没有在拉。
+   * 与 loadMore 互斥，理由同 useSongList 的 restRun（同一 offset 并发会白丢一页）。
+   */
+  const restRun = useRef<{ token: number; done: Promise<boolean> } | null>(null)
   /** 上一次请求的条件指纹；与这次相同 → 只因切回本页而重跑，走静默路径 */
   const lastKey = useRef<string | null>(null)
 
@@ -146,13 +159,54 @@ export function usePlaylistSongs(
   }, [active, key, pageSize, revision, load])
 
   const loadMore = useCallback(() => {
-    if (loading || loadingMore) return
+    // 后台正在一次拉完时不另起一页（见 fetchAll）
+    if (loading || loadingMore || restRun.current) return
     setLoadingMore(true)
     const token = generation.current
     void load(songs.length, token).finally(() => {
       if (token === generation.current) setLoadingMore(false)
     })
   }, [load, loading, loadingMore, songs.length])
+
+  /**
+   * 后台把余下的分页一次拉完，返回是否**真的到底了**（取消 / 出错都是 false）。
+   *
+   * ★ 与滚动触发的那条走同一个 `load`：并进列表、去重、错误处理只有一份实现。
+   * ★ 已经有一轮在拉就等它，不另起一轮 —— 两边同时以一页为步长推进会拿到同一个 offset，
+   *   去重之后那一页就白丢了。
+   */
+  const drain = useCallback(async (): Promise<boolean> => {
+    const token = generation.current
+    const running = restRun.current
+    if (running && running.token === token) return running.done
+
+    const run = (async (): Promise<boolean> => {
+      while (token === generation.current && songsRef.current.length < totalRef.current) {
+        const before = songsRef.current.length
+        setLoadingMore(true)
+        await load(before, token)
+        if (token !== generation.current) return false
+        // 这一页一首新的都没拿到（出错，或后端在翻页期间删过歌）：别再原地打转
+        if (songsRef.current.length <= before) return false
+      }
+      return token === generation.current && songsRef.current.length >= totalRef.current
+    })()
+    const entry = { token, done: run }
+    restRun.current = entry
+    try {
+      return await run
+    } finally {
+      if (restRun.current === entry) restRun.current = null
+      if (token === generation.current) setLoadingMore(false)
+    }
+  }, [load])
+
+  const fetchAll = useCallback(async (): Promise<Song[]> => {
+    const token = generation.current
+    const complete = await drain()
+    if (!complete || token !== generation.current) throw new Error('列表没有加载完，请重试')
+    return songsRef.current
+  }, [drain])
 
   const refresh = useCallback(() => {
     const token = ++generation.current
@@ -197,6 +251,7 @@ export function usePlaylistSongs(
     patchSong,
     removeSongs,
     setSongs: commit,
-    fetchAllIds
+    fetchAllIds,
+    fetchAll
   }
 }

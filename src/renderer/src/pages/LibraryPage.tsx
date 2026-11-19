@@ -540,7 +540,9 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
       {shouldShowSelectionBar(selectAllIds?.length ?? selection.length) ? (
         <SelectionBar
           ids={totalForBar}
-          songs={selectAllIds ? undefined : selectedSongs}
+          songs={selectedSongs}
+          /* 「全选当前筛选」手上只有 id：播放 / 入队前先把整份列表补齐（见 SelectionBar） */
+          loadSongs={list.fetchAll}
           selectAll={Boolean(selectAllIds)}
           selectAllTotal={selectAllIds?.length}
           onClear={clearSelection}

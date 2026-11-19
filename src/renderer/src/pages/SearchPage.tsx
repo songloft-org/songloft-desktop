@@ -261,7 +261,9 @@ export function SearchPage({ keyword }: { keyword: string }): React.JSX.Element 
             selectAllIds ??
             selection.map((i) => list.songs[i]?.id).filter((x): x is number => x != null)
           }
-          songs={selectAllIds ? undefined : selectedSongs}
+          songs={selectedSongs}
+          /* 「全选当前筛选」手上只有 id：播放 / 入队前先把整份列表补齐（见 SelectionBar） */
+          loadSongs={list.fetchAll}
           selectAll={Boolean(selectAllIds)}
           selectAllTotal={selectAllIds?.length}
           onClear={() => {

@@ -504,7 +504,9 @@ export function PlaylistDetailPage({ playlistId }: { playlistId: number }): Reac
             selectAllIds ??
             selection.map((i) => list.songs[i]?.id).filter((x): x is number => x != null)
           }
-          songs={selectAllIds ? undefined : selectedSongs}
+          songs={selectedSongs}
+          /* 「全选」手上只有 id：播放 / 入队前先把整份列表补齐（见 SelectionBar） */
+          loadSongs={list.fetchAll}
           selectAll={Boolean(selectAllIds)}
           selectAllTotal={selectAllIds?.length}
           playlistId={playlistId}

@@ -184,7 +184,7 @@ export function FoldersView({ path }: { path: string }): React.JSX.Element {
           ids={
             selectAllIds ?? selection.map((i) => songs[i]?.id).filter((x): x is number => x != null)
           }
-          songs={selectAllIds ? undefined : selectedSongs}
+          songs={selectedSongs}
           selectAll={Boolean(selectAllIds)}
           selectAllTotal={selectAllIds?.length}
           onClear={clearSelection}
