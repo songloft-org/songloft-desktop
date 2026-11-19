@@ -7,7 +7,7 @@
  *   「本地」= 本机那批文件。合并的是入口，不是把几份数据混在一起：换到「本地」时一个
  *   后端请求也不发。
  *
- * ★ 电台本来是「服务器」里那颗类型筛选（全部 / 服务器 / 网络 / 电台）的一档，现在提到
+ * ★ 电台本来是「服务器」里那颗类型筛选（全部 / 本地 / 网络 / 电台）的一档，现在提到
  *   第一层单列一格。理由有两条：它自成一份内容（只有这一档才有「添加电台」这件事），
  *   而类型筛选是同一页的第二层 —— 把一份内容藏在另一份内容的筛选里，用户得先想到
  *   「电台是曲库的一种类型」才找得到。提上来之后类型筛选里就**不再有它**（见 TYPE_OPTIONS）。
@@ -21,8 +21,10 @@
  *   「挑哪一块内容摆上去」这一件事。
  *
  * ★ 工具条右侧那几颗钮的分工：**分类浏览**与**显示隐藏歌单曲目**是这一页的两颗开关
- *   （图标钮，打开 = 泛强调色，含义靠悬浮提示交代），**排序**是选择器。看法本身的切换
- *   （曲库 / 文件夹）不在这里 —— 它嵌在页头「服务器」那一格里（components/LibraryHeader）。
+ *   （图标钮，打开 = 泛强调色，含义靠悬浮提示交代），紧接着是**看法切换**
+ *   （曲库 / 文件夹，components/LibraryViewSwitch），最右端收在**排序**这个下拉框上 ——
+ *   它是这一行里唯一带文字的选择器，靠边站最好找。看法切换与排序同处一条控制带，
+ *   而不是与「本地 / 电台 / 服务器」那种「换一份内容」并列。
  *
  * 曲库模式（LibraryView）做了三件原 Flutter 端没做好的事：
  *   1. **分面浏览就在同一页**：歌手/专辑/流派/语种/风格 五个维度用 chip 切换，
@@ -48,10 +50,11 @@ import {
 } from '@/components/Icons'
 import { AddRadioDialog } from '@/components/AddRadioDialog'
 import { LibraryHeader } from '@/components/LibraryHeader'
+import { LibraryViewSwitch } from '@/components/LibraryViewSwitch'
 import { CardGridSkeleton, Cover, EmptyState } from '@/components/primitives'
 import { SelectionBar, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { LIBRARY_COLUMNS, SongTable, type SongSort } from '@/components/SongTable'
-import { getFacets } from '@/api/endpoints'
+import { getFacets, SONG_TYPE_LABELS } from '@/api/endpoints'
 import { useAsync } from '@/hooks/useAsync'
 import { useSongList } from '@/hooks/useSongList'
 import { requireClient } from '@/state/useAuth'
@@ -63,16 +66,18 @@ import { LocalFilesView } from './LocalFilesView'
 /**
  * 歌曲类型（后端 `type` 参数）—— 「服务器」那一半里的筛选。
  *
- * ★ 第一档的**值**仍是 `local`（后端口径：存在服务器本机磁盘上的歌），但**名字**改叫
- *   「服务器」—— 页头那颗来源切换把「本地」这个词拿走了（它现在指本机磁盘上的文件），
- *   两处都叫「本地」的话，这一行看上去像在筛下面那几种内容里的第二种。
+ * ★ 第一档的**值**是 `local`（后端口径：存在**服务器那台机器**磁盘上的歌），名字就叫
+ *   「本地」（与 `SONG_TYPE_LABELS` 同一口径）。
+ * ★ 它跟页头第一层那颗「本地」**不是一回事**：那颗指**这台机器**磁盘上的文件
+ *   （pages/LocalFilesView，读磁盘、不需要会话）。两个「本地」不会同时出现在同一层级上 ——
+ *   类型筛选只在「服务器」那一半里出现，而那一半说的本来就是服务器上的东西。
  * ★ **没有 `radio`**：电台已经提到页头第一层（见 LibraryPage 的说明），这里再留一份就是
  *   同一件事的两个入口。而「全部」照旧包含电台 —— 那一档只是给它一个更近的门口。
  */
 const TYPE_OPTIONS: { value: SongType | 'all'; label: string }[] = [
   { value: 'all', label: '全部' },
-  { value: 'local', label: '服务器' },
-  { value: 'remote', label: '网络' }
+  { value: 'local', label: SONG_TYPE_LABELS.local },
+  { value: 'remote', label: SONG_TYPE_LABELS.remote }
 ]
 
 const BROWSE_FIELDS: FacetField[] = ['artist', 'album', 'genre', 'language', 'style']
@@ -324,6 +329,10 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
           >
             <IconEyeOff size={16} />
           </button>
+          {/* 同一份内容的两种看法（曲库 / 文件夹）：挨着排序、在它左边 ——
+              最右端留给排序（这一行里唯一带文字的下拉框，靠边收尾更好找）。
+              电台那一份没有这一层（见 fixedType） */}
+          {fixedType ? null : <LibraryViewSwitch pane="library" />}
           <select
             className="input"
             style={{ width: 132, height: 29, fontSize: 12.5 }}

@@ -169,10 +169,11 @@ src/
    │                  LibraryPage 一页四份内容：服务器的曲库（按标签）/ 服务器的文件夹
    │                  （按目录）/ 电台（`type=radio`，原先只是类型筛选的一档）/
    │                  本机磁盘上的音频文件（唯一不需要登录的那一份，见 §8.16）。
-   │                  看哪一份由页头那颗「本地 / 电台 / 服务器」切换决定（「服务器」那一格里还嵌着
-   │                  「曲库 / 文件夹」两颗子选项）—— 页头由四份内容共用同一份实现
-   │                  （components/LibraryHeader）：副标题与动作钮（刷新 / 播放全部…）都只有
-   │                  各自的视图才知道，所以由它们各自把这份页头摆上 —— 标题 + 副标题在第一行，
+   │                  看哪一份由页头那颗「本地 / 电台 / 服务器」切换决定；「服务器」内部那两种
+   │                  看法（曲库 / 文件夹）是工具条右端的一对图标钮（components/LibraryViewSwitch，
+   │                  曲库那一半在「排序」左边、文件夹那一半落在面包屑右端）—— 页头由四份内容共用
+   │                  同一份实现（components/LibraryHeader）：副标题与动作钮（刷新 / 播放全部…）
+   │                  都只有各自的视图才知道，所以由它们各自把这份页头摆上 —— 标题 + 副标题在第一行，
    │                  动作钮在第二行右端、与来源切换同一行）
    ├─ components/    Sidebar / TitleBar / SongTable / PlayerBar / LyricsView / CommandPalette /
    │                 Panel / ContextMenu / Modal / Toasts / SelectionBar /

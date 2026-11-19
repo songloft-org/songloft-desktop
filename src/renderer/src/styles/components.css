@@ -3874,6 +3874,21 @@ html[data-mini='true'] .toasts {
 
 /* ── 文件夹浏览 ───────────────────────────────────────────────────────── */
 
+/*
+ * 「服务器」那一半的两颗看法钮（曲库 / 文件夹，见 components/LibraryViewSwitch）。
+ *
+ * ★ 只是一条夹着两颗 .icon-btn 的横排：样式全在图标钮那一套里（尺寸、悬浮底、按下泛强调色），
+ *   这里只负责「两个挨着、不参与伸缩」。间距比工具条里的 8 收一档（2）—— 它们是一对，
+ *   离得近才读得出「这是同一件事的两个选择」。
+ * ★ flex: none：曲库那一半它紧挨着「排序」左侧，窗口收窄时该挤的是下拉框那一组，不是它。
+ */
+.library-view-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
 .crumbs {
   display: flex;
   align-items: center;

@@ -9,7 +9,8 @@
  *
  * ★ 页头由 LibraryHeader 提供（**曲库看法里也是同一个组件、同一份版式**）：标题与副标题由
  *   它摆，所以这里只画自己那一行动作和目录内容 —— 两处各写一遍标题，迟早会长歪。
- * ★ 切回「曲库」不用在这里另摆一颗钮：它嵌在页头来源切换的「服务器」那一格里，两种看法下都在。
+ * ★ 切回「曲库」不用在这里另写一套：它与曲库那一半摆的是**同一个** LibraryViewSwitch
+ *   （两颗图标钮），只是这一页没有「排序」那条工具条，于是落在面包屑这一行的右端。
  */
 
 import { useMemo, useState } from 'react'
@@ -17,6 +18,7 @@ import { useMemo, useState } from 'react'
 import type { Song } from '@shared/types'
 import { IconFolder, IconFolderOpen, IconMusic, IconPlay, IconRefresh } from '@/components/Icons'
 import { LibraryHeader } from '@/components/LibraryHeader'
+import { LibraryViewSwitch } from '@/components/LibraryViewSwitch'
 import { EmptyState } from '@/components/primitives'
 import { SelectionBar, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { LIBRARY_COLUMNS, SongTable } from '@/components/SongTable'
@@ -81,26 +83,30 @@ export function FoldersView({ path }: { path: string }): React.JSX.Element {
         </button>
       </LibraryHeader>
 
-      {/* ── 面包屑 ── */}
-      <div className="crumbs" style={{ marginBottom: 14 }}>
-        <button type="button" onClick={() => navigate({ name: 'folders', path: '' })}>
-          音乐根目录
-        </button>
-        {segments.map((segment) => (
-          <span key={segment.path} className="row" style={{ gap: 4 }}>
-            <span style={{ color: 'var(--text-4)' }}>/</span>
-            <button
-              type="button"
-              aria-current={segment.path === path}
-              onClick={() => navigate({ name: 'folders', path: segment.path })}
-              style={
-                segment.path === path ? { color: 'var(--text-1)', fontWeight: 600 } : undefined
-              }
-            >
-              {segment.label}
-            </button>
-          </span>
-        ))}
+      {/* ── 面包屑 + 看法切换 ── */}
+      <div className="row-between" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
+        <div className="crumbs">
+          <button type="button" onClick={() => navigate({ name: 'folders', path: '' })}>
+            音乐根目录
+          </button>
+          {segments.map((segment) => (
+            <span key={segment.path} className="row" style={{ gap: 4 }}>
+              <span style={{ color: 'var(--text-4)' }}>/</span>
+              <button
+                type="button"
+                aria-current={segment.path === path}
+                onClick={() => navigate({ name: 'folders', path: segment.path })}
+                style={
+                  segment.path === path ? { color: 'var(--text-1)', fontWeight: 600 } : undefined
+                }
+              >
+                {segment.label}
+              </button>
+            </span>
+          ))}
+        </div>
+        {/* 与曲库那一半同一对钮（它在那边挨着「排序」，这一页没有那条工具条） */}
+        <LibraryViewSwitch pane="folders" />
       </div>
 
       {result.error ? (
