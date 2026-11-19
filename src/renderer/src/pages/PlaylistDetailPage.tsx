@@ -105,9 +105,19 @@ export function PlaylistDetailPage({ playlistId }: { playlistId: number }): Reac
   const canReorder =
     sort === 'position' && !keyword && list.songs.length === list.total && list.total > 1
 
+  /*
+   * 全选生效期间，随后加载出来的行也都在「已选」范围内（推导而不是快照，见 LibraryPage）。
+   */
+  const effectiveSelection = useMemo(
+    () => (selectAllIds ? list.songs.map((_, index) => index) : selection),
+    [selectAllIds, list.songs, selection]
+  )
   const selectedSongs = useMemo(
-    () => selection.map((i) => list.songs[i]).filter((s): s is NonNullable<typeof s> => Boolean(s)),
-    [selection, list.songs]
+    () =>
+      effectiveSelection
+        .map((i) => list.songs[i])
+        .filter((s): s is NonNullable<typeof s> => Boolean(s)),
+    [effectiveSelection, list.songs]
   )
 
   const totalDuration = useMemo(
@@ -465,7 +475,7 @@ export function PlaylistDetailPage({ playlistId }: { playlistId: number }): Reac
         loadingMore={list.loadingMore}
         total={list.total}
         onLoadMore={list.loadMore}
-        selection={selection}
+        selection={effectiveSelection}
         onSelectionChange={(indexes) => {
           setSelection(indexes)
           setSelectAllIds(null)

@@ -169,9 +169,19 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
     FacetField,
     string
   ][]
+  /*
+   * 全选生效期间，随后加载出来的行也都在「已选」范围内：行选中态交给
+   * 「整份筛选都已选」这个事实推导，而不是停留在按下 Ctrl+A 那一刻的快照 ——
+   * 否则滚动加载的新行没有高亮，看着像没选上。行级修改（点选 / Shift 连选）由
+   * onSelectionChange 收回 selectAllIds，回到手选的那一份。
+   */
+  const effectiveSelection = useMemo(
+    () => (selectAllIds ? list.songs.map((_, index) => index) : selection),
+    [selectAllIds, list.songs, selection]
+  )
   const selectedSongs = useMemo(
-    () => selection.map((i) => list.songs[i]).filter((s): s is Song => Boolean(s)),
-    [selection, list.songs]
+    () => effectiveSelection.map((i) => list.songs[i]).filter((s): s is Song => Boolean(s)),
+    [effectiveSelection, list.songs]
   )
 
   const clearSelection = useCallback(() => {
@@ -522,7 +532,7 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
         loadingMore={list.loadingMore}
         total={list.total}
         onLoadMore={list.loadMore}
-        selection={selection}
+        selection={effectiveSelection}
         onSelectionChange={(indexes) => {
           setSelection(indexes)
           setSelectAllIds(null)
