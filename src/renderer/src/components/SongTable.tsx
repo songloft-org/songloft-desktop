@@ -20,6 +20,7 @@ import { IconGrip, IconHeart, IconLoader, IconMore, IconPause, IconPlay } from '
 import { Cover, EmptyState, InfiniteSentinel, SongRowsSkeleton } from './primitives'
 import { buildSongMenuItems, type SongMenuOptions } from './songMenu'
 import { usePageActive } from '@/hooks/usePageActive'
+import { useRowWindow } from '@/hooks/useRowWindow'
 import { SONGS_DRAG_TYPE } from '@/lib/dnd'
 import { displayAlbum, displayArtist, formatDuration, formatRelative } from '@/lib/format'
 import { scrollRowToCenterIfHidden } from '@/lib/scroll'
@@ -109,8 +110,6 @@ export interface SongTableProps {
   emptyAction?: React.ReactNode
   /** 额外的行右键项（追加在标准项之后） */
   extraMenuItems?: (song: Song) => MenuItem[]
-  /** 虚拟化的行数上限提示：超过这个数只渲染前 N 行（避免一次性挂上万节点） */
-  maxRendered?: number
 }
 
 export function SongTable({
@@ -130,8 +129,7 @@ export function SongTable({
   emptyTitle = '这里还没有歌曲',
   emptyDescription,
   emptyAction,
-  extraMenuItems,
-  maxRendered = 1200
+  extraMenuItems
 }: SongTableProps): React.JSX.Element {
   const currentSongId = usePlayer((s) =>
     s.cursor >= 0 && s.cursor < s.order.length ? (s.queue[s.order[s.cursor]]?.id ?? null) : null
@@ -142,6 +140,17 @@ export function SongTable({
   const selectionSet = useMemo(() => new Set(selection), [selection])
   /** Shift 连选的锚点：上一次**不带 Shift** 的点击落点（见 handleRowClick 的说明） */
   const selectionAnchor = useRef<number | null>(null)
+  /**
+   * 只挂视口附近那几十行（见 hooks/useRowWindow）。
+   *
+   * ★ 它替掉了原先那个「最多渲染前 1200 行」的上限：那个上限到了 1200 之后就再也
+   *   看不到后面的歌（数据还在加载，行却永远不挂出来），用户会以为加载停了。
+   *   窗口化之后 DOM 一样有界，而**每一行都到得了**。
+   * ★ 行下标仍然是**整份列表里的绝对下标**（窗口外的行也一样），所以选中、播放、
+   *   拖拽重排、`data-song-index` 这些全都照旧。
+   */
+  const rowWindow = useRowWindow(songs.length)
+  const tableRef = rowWindow.tableRef
 
   const gridTemplate = useMemo(() => columns.map((c) => c.width).join(' '), [columns])
 
@@ -201,7 +210,10 @@ export function SongTable({
     [onSelectionChange, selection, selectionSet, songs.length]
   )
 
-  const visibleSongs = songs.length > maxRendered ? songs.slice(0, maxRendered) : songs
+  /** 这一帧真正挂出来的那一段（窗口外的行由上下两块等高空白代替，见 hooks/useRowWindow） */
+  const visibleSongs = songs.slice(rowWindow.start, rowWindow.end)
+  const topPad = rowWindow.start * rowWindow.rowHeight
+  const bottomPad = Math.max(0, (songs.length - rowWindow.end) * rowWindow.rowHeight)
 
   /*
    * 当前曲在这份列表里的下标；不在列表里就是 -1。
@@ -236,13 +248,15 @@ export function SongTable({
    * ★ 首尾的夹取在 lib/scroll.ts 里：滚到 0 或滚到底就停，不会为了「居中」拉出空白。
    */
   const pageActive = usePageActive()
-  const tableRef = useRef<HTMLDivElement>(null)
+  /** 窗口化之后这里要调用它（centerRow 的 identity 跟着行高变） */
+  const centerRow = rowWindow.centerRow
   useEffect(() => {
     if (!pageActive || currentIndex < 0) return
-    // 排在 maxRendered 之后的行根本不渲染（列表底部那条提示就是这么说的），找不到就什么都不做
     const row = tableRef.current?.querySelector<HTMLElement>(`[data-song-index="${currentIndex}"]`)
-    scrollRowToCenterIfHidden(row ?? null)
-  }, [pageActive, currentIndex])
+    // 那一行可能还不在窗口里（窗口化之后这是常态）：按几何滚过去，下一帧它就会被挂出来
+    if (row) scrollRowToCenterIfHidden(row)
+    else centerRow(currentIndex)
+  }, [pageActive, currentIndex, centerRow, tableRef])
 
   if (loading && songs.length === 0) {
     return (
@@ -289,67 +303,70 @@ export function SongTable({
         })}
       </div>
 
-      {visibleSongs.map((song, index) => (
-        <SongRow
-          key={`${song.id}-${index}`}
-          song={song}
-          index={index}
-          gridTemplate={gridTemplate}
-          columns={columns}
-          current={song.id === currentSongId}
-          playing={playing}
-          selected={selectionSet.has(index)}
-          onPlay={() => onPlayAt(index)}
-          onClick={(event) => handleRowClick(event, index)}
-          onContextMenu={(event) =>
-            openMenuFromEvent(event, [
-              ...buildSongMenuItems(
+      {/* 窗口上方的行：用一块等高空白顶住，滚动位置与滚动条长度都与「全部挂出来」时一致 */}
+      {topPad > 0 ? <div style={{ height: topPad }} aria-hidden="true" /> : null}
+
+      {visibleSongs.map((song, offset) => {
+        // 行下标是**整份列表里的绝对下标**：选中、播放、拖拽、data-song-index 全靠它
+        const index = rowWindow.start + offset
+        return (
+          <SongRow
+            key={`${song.id}-${index}`}
+            song={song}
+            index={index}
+            gridTemplate={gridTemplate}
+            columns={columns}
+            current={song.id === currentSongId}
+            playing={playing}
+            selected={selectionSet.has(index)}
+            onPlay={() => onPlayAt(index)}
+            onClick={(event) => handleRowClick(event, index)}
+            onContextMenu={(event) =>
+              openMenuFromEvent(event, [
+                ...buildSongMenuItems(
+                  selectionSet.has(index) && selection.length > 1
+                    ? selection.map((i) => songs[i]).filter(Boolean)
+                    : [song],
+                  menuOptions
+                ),
+                ...(extraMenuItems?.(song) ?? [])
+              ])
+            }
+            onMoreClick={(event) => {
+              // 多选状态下对任一选中行点「更多」，操作的是整批
+              const targets =
                 selectionSet.has(index) && selection.length > 1
                   ? selection.map((i) => songs[i]).filter(Boolean)
-                  : [song],
-                menuOptions
-              ),
-              ...(extraMenuItems?.(song) ?? [])
-            ])
-          }
-          onMoreClick={(event) => {
-            // 多选状态下对任一选中行点「更多」，操作的是整批
-            const targets =
-              selectionSet.has(index) && selection.length > 1
-                ? selection.map((i) => songs[i]).filter(Boolean)
-                : [song]
-            openMenuFromEvent(event, buildSongMenuItems(targets, menuOptions))
-          }}
-          reorderable={Boolean(onReorder)}
-          dropBefore={dragOverIndex === index}
-          onDragStart={() => {
-            dragSource.current = index
-          }}
-          onDragOver={(event) => {
-            if (!onReorder || dragSource.current === null) return
-            event.preventDefault()
-            setDragOverIndex(index)
-          }}
-          onDrop={() => {
-            if (onReorder && dragSource.current !== null && dragSource.current !== index) {
-              onReorder(dragSource.current, index)
-            }
-            dragSource.current = null
-            setDragOverIndex(null)
-          }}
-          onDragEnd={() => {
-            dragSource.current = null
-            setDragOverIndex(null)
-          }}
-        />
-      ))}
+                  : [song]
+              openMenuFromEvent(event, buildSongMenuItems(targets, menuOptions))
+            }}
+            reorderable={Boolean(onReorder)}
+            dropBefore={dragOverIndex === index}
+            onDragStart={() => {
+              dragSource.current = index
+            }}
+            onDragOver={(event) => {
+              if (!onReorder || dragSource.current === null) return
+              event.preventDefault()
+              setDragOverIndex(index)
+            }}
+            onDrop={() => {
+              if (onReorder && dragSource.current !== null && dragSource.current !== index) {
+                onReorder(dragSource.current, index)
+              }
+              dragSource.current = null
+              setDragOverIndex(null)
+            }}
+            onDragEnd={() => {
+              dragSource.current = null
+              setDragOverIndex(null)
+            }}
+          />
+        )
+      })}
 
-      {songs.length > maxRendered ? (
-        <div style={{ padding: '16px 14px', fontSize: 12.5, color: 'var(--text-4)' }}>
-          已渲染前 {maxRendered} 首，继续滚动或缩小筛选范围以查看其余 {songs.length - maxRendered}{' '}
-          首
-        </div>
-      ) : null}
+      {/* 窗口下方的行：同一块等高空白（见 hooks/useRowWindow） */}
+      {bottomPad > 0 ? <div style={{ height: bottomPad }} aria-hidden="true" /> : null}
 
       {/*
         表尾那一行「正在加载更多歌曲…」：无限滚动的反馈只有这一处（滚到底之后表格下方是

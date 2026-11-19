@@ -189,6 +189,8 @@ src/
    │                 GithubDiscoveryCard（发现页的卡片）/ GithubTokenDialog（发现页的凭据）/
    │                 AddRadioDialog（曲库→电台 的「添加电台」表单：地址 / 标题 / 视频内容）
    ├─ hooks/         useSongList（分页列表：滚动分页 + 「播放全部」用的 loadAll）/
+   │                 useRowWindow（长列表的渲染窗口：只挂视口附近几十行，上下用等高空白
+   │                 撑住；纯计算在 lib/row-window.ts，有单测）/
    │                 usePlaylistSongs / useAsync / useResponsiveSidebar /
    │                 usePageActive（页面槽的「我看得见吗」，见 §4 的页面槽那段）/
    │                 useGithubDiscovery（商店里「GitHub 发现」那一份，见 §8.12）/

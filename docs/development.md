@@ -112,7 +112,8 @@ src/
    ├─ components/    Sidebar / TitleBar / SongTable / PlayerBar / LyricsView / CommandPalette /
    │                 Panel / ContextMenu / Modal / Toasts / SelectionBar / FullPlayer /
    │                 MiniPlayer / ExtensionFrame / PluginSurface / RegistrySourcesDialog / …
-   ├─ hooks/         useSongList / usePlaylistSongs / useAsync / usePageActive /
+   ├─ hooks/         useSongList / useRowWindow（长列表只挂视口附近几十行）/
+   │                 usePlaylistSongs / useAsync / usePageActive /
    │                 useResponsiveSidebar / useHorizontalScroll
    ├─ lib/           url / color / accent / format / concurrency / responsive / plugin-actions /
    │                 window-role（「我在哪个窗口里」+「我是不是宿主」）
