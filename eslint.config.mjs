@@ -4,7 +4,9 @@ import reactHooks from 'eslint-plugin-react-hooks'
 
 export default tseslint.config(
   {
-    ignores: ['out/**', 'release/**', 'node_modules/**', 'build/**', 'coverage/**']
+    // .Trash-*：GNOME 回收站在工作区根下落的那一份（把文件删进回收站时出现），
+    // 是环境产物不是仓库内容 —— 不忽略的话 eslint . 会拿几千条垃圾报错把 lint 打挂
+    ignores: ['out/**', 'release/**', 'node_modules/**', 'build/**', 'coverage/**', '.Trash-*/**']
   },
 
   // ★ 核心规则必须显式引入：typescript-eslint 的 recommended 不含核心规则，
