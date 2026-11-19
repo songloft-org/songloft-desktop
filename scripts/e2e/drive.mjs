@@ -152,7 +152,7 @@ window.__t = {
   },
   /**
    * 按文字点第 n 个匹配。
-   * 用在"同一张卡片里有两个同名按钮"的地方（服务端更新与客户端更新的按钮都叫「检查更新」），
+   * 用在"同一张卡片里有两个同名按钮"的地方（服务端与客户端两行的按钮都叫「检查更新」），
    * byText 只认第一个，点不着后面那个。
    */
   clickNth: (sel, text, index) => {
@@ -633,6 +633,11 @@ window.__t = {
      * 选项本身要点开菜单才看得见，所以那部分交给下面两步（43b / 43c）。
      */
     storeSourceTrigger: (vis('button[aria-label="筛选订阅源"]')[0]?.textContent || '').trim(),
+    /**
+     * 「更新方式」下拉触发器上写着的当前档位（与 storeSourceTrigger 同一读法）。
+     * 选项要点开菜单才看得见，所以那部分交给 41 那几步。
+     */
+    updateModeTrigger: (vis('button[aria-label="更新方式"]')[0]?.textContent || '').trim(),
     /**
      * 单选下拉面板里各条的**标题**（不含第二行说明）。
      *
@@ -1321,19 +1326,31 @@ const STEPS = [
     800,
     { modals: exactly(0) }
   ],
-  // 自动检查更新开关：关一下再开回来。这两步才叫"验了开关" —— 只断言它存在的话，
-  // onChange 根本没接上（点了没反应）也照样绿
+  // 「更新方式」下拉（SettingSelect）：点开看三档 → 切到「关闭更新」→ 再切回「仅检查更新」。
+  // 断言触发器文字真的变了 —— 只断言下拉存在的话，onChange 没接上（点了没反应）也照样绿
   [
-    '41-auto-update-switch-off',
-    'window.__t.click(\'button[aria-label="启动时自动检查更新"]\')',
-    1000,
-    { switchesOn: exactly(0) }
+    '41-update-mode-menu',
+    'window.__t.click(\'button[aria-label="更新方式"]\')',
+    700,
+    { menus: exactly(1), sourceMenuLabels: equals('关闭更新', '仅检查更新', '自动下载更新') }
   ],
   [
-    '42-auto-update-switch-on',
-    'window.__t.click(\'button[aria-label="启动时自动检查更新"]\')',
-    1000,
-    { switchesOn: exactly(1) }
+    '42-update-mode-off',
+    "window.__t.click('.context-menu button', '关闭更新')",
+    800,
+    { menus: exactly(0), updateModeTrigger: exactly('关闭更新') }
+  ],
+  [
+    '42b-update-mode-menu-again',
+    'window.__t.click(\'button[aria-label="更新方式"]\')',
+    700,
+    { menus: exactly(1) }
+  ],
+  [
+    '42c-update-mode-restore',
+    "window.__t.click('.context-menu button', '仅检查更新')",
+    800,
+    { menus: exactly(0), updateModeTrigger: exactly('仅检查更新') }
   ],
 
   /*

@@ -5,8 +5,9 @@
  * 切去别的页）。状态跟着组件走的话，重新打开就只剩一个「检查更新」按钮 —— 既看不到进度，
  * 也放不下那个已经下好的安装包。放在 store 里，弹窗只是它的一个观察窗。
  *
- * ★ 这里仍然**不做安装**：应用不替换自身的二进制，只把安装包下到「下载」目录并打开它
- *   （理由见 src/main/update-download.ts）。所以状态机的终点是「已下载」，不是「已安装」。
+ * ★ 这里仍然**不做安装**：应用不替换自身的二进制，只把安装包下到应用数据目录的 updates/
+ *   里，装与不装由用户决定（「立即更新」拉起系统安装程序；免安装形态自己到文件夹里动手，
+ *   理由见 src/main/update-download.ts）。所以状态机的终点是「已下载」，不是「已安装」。
  * ★ 下载时主进程会顺手记一份「待安装」记录：下次启动时 App 调 loadPending() 把它拿回来，
  *   由 PendingUpdateModal 问用户要不要打开安装程序（见 main/pending-update.ts）。
  */
@@ -59,7 +60,6 @@ interface ClientUpdateState {
   checkNow(): Promise<void>
   download(): Promise<void>
   cancel(): void
-  openFile(): Promise<void>
   revealFile(): Promise<void>
   /** 启动时拉一次「待安装记录」；没有或不可用就是 null（主进程会顺手清掉坏记录） */
   loadPending(): Promise<void>
@@ -106,7 +106,7 @@ export const useClientUpdate = create<ClientUpdateState>((set, get) => ({
     try {
       const check = await window.songloft.app.checkClientUpdate(await readProxies())
       // 已下好的安装包只对「当时那个版本」有意义：查到了别的版本就别再把它摆出来
-      // （文件仍在下载目录里，用户自己去拿就是了）
+      // （文件仍在更新目录里，用户自己去拿就是了）
       set((state) => ({
         check,
         file: state.check && state.check.latestTag === check.latestTag ? state.file : null
@@ -156,14 +156,6 @@ export const useClientUpdate = create<ClientUpdateState>((set, get) => ({
 
   cancel() {
     void window.songloft.app.cancelClientUpdate().catch(() => undefined)
-  },
-
-  async openFile() {
-    try {
-      await window.songloft.app.openClientUpdate()
-    } catch (err) {
-      toast('打不开安装包', 'error', err instanceof Error ? err.message : undefined)
-    }
   },
 
   async revealFile() {

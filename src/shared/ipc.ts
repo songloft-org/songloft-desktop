@@ -77,8 +77,6 @@ export const IPC = {
   clientUpdateDownload: 'app:download-client-update',
   /** 取消正在跑的下载 */
   clientUpdateCancel: 'app:cancel-client-update',
-  /** 用系统默认程序打开刚下好的安装包（不接路径参数，只认主进程记下的那一个） */
-  clientUpdateOpen: 'app:open-client-update',
   /** 在文件管理器里定位刚下好的安装包 */
   clientUpdateReveal: 'app:reveal-client-update',
   /**
@@ -435,6 +433,12 @@ export interface AppInfo {
 }
 
 /**
+ * 客户端更新的方式。**只作用于客户端** —— 服务端不主动检查更新：升级要在服务器上动手，
+ * 归连着服务器的那个人管，客户端不替他盯（见设置页「更新方式」那一行）。
+ */
+export type UpdateMode = 'off' | 'check' | 'download'
+
+/**
  * 服务端设置里的两项代理，原样传给主进程（客户端不保存它们，也不改它们）。
  *
  * ★ 它们可能只跑在服务器本机或它的内网里，客户端未必连得到 —— 所以主进程用之前会先判定，
@@ -485,7 +489,7 @@ export interface ClientUpdateDownloadRequest extends ClientUpdateProxies {
 }
 
 export interface ClientUpdateDownloadResult {
-  /** 落到本机的绝对路径（在「下载」目录里） */
+  /** 落到本机的绝对路径（在应用数据目录的 updates/ 里，见 main/update-download.ts） */
   path: string
   /** 实际写入的字节数 */
   bytes: number
@@ -627,12 +631,13 @@ export interface AppSettings {
    */
   localCacheMaxSize: number
   /**
-   * 启动时自动检查更新（服务端与客户端各查一次）。
+   * 客户端更新的方式（见 UpdateMode）：关闭更新 / 仅检查更新 / 自动下载更新。
    *
-   * 两次都是普通读取：客户端那次由主进程直连 GitHub，服务端那次是问后端 `/upgrade/check`。
-   * 关掉就完全不因为这件事联网（两边都不查）。
+   * 启动时由它决定查不查、查到之后只提示还是顺手把安装包下到本机。
+   * **只作用于客户端** —— 服务端不主动检查更新（旧版的 autoCheckUpdate 开关由
+   * main/store.ts 的读盘迁移接过来：false → 'off'）。
    */
-  autoCheckUpdate: boolean
+  updateMode: UpdateMode
   /** 侧栏是否折叠 */
   sidebarCollapsed: boolean
   /**
@@ -735,8 +740,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   allowInsecureTls: false,
   // 与上游客户端的默认档一致：本机缓存默认给 1 GB，再多就该自己清或调小了
   localCacheMaxSize: 1024 ** 3,
-  // 默认开着：查一次很便宜，而「不知道自己落后了」的代价更大；嫌烦的人可以关掉
-  autoCheckUpdate: true,
+  // 默认「仅检查更新」：查一次很便宜，而「不知道自己落后了」的代价更大；嫌烦的人可以关掉
+  updateMode: 'check',
   sidebarCollapsed: false,
   extensionSidebarState: 'expanded',
   // 默认网格：封面是歌单最主要的识别信息（见 PlaylistsPage 的说明）

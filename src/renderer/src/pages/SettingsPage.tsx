@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
-import type { AppInfo, ServerProbeResult } from '@shared/ipc'
+import type { AppInfo, ServerProbeResult, UpdateMode } from '@shared/ipc'
 import { REPO_RELEASES_URL, REPO_URL, UPSTREAM_URL } from '@shared/links'
 import type {
   AutoScanSetting,
@@ -3150,25 +3150,46 @@ function AboutSettings(): React.JSX.Element {
   )
 }
 
+/** 「更新方式」的三档（顺序即下拉里的顺序）。取值见 shared/ipc.ts 的 UpdateMode */
+const UPDATE_MODE_OPTIONS: readonly SelectOption<UpdateMode>[] = [
+  { value: 'off', label: '关闭更新', desc: '启动时不检查客户端更新，也不自动下载' },
+  { value: 'check', label: '仅检查更新', desc: '启动时检查一次，有新版本才提示' },
+  { value: 'download', label: '自动下载更新', desc: '检查到新版本后自动把安装包下到本机' }
+]
+
 /**
  * 更新。
  *
- * 服务端那条开弹窗（UpgradeModal）：检查 → 选通道 → 在线升级或上传二进制 → 盯进度，
+ * 两行各开各的弹窗：服务端那条（UpgradeModal）检查 → 选通道 → 在线升级或上传二进制 → 盯进度，
  * 这一整套塞不进一行设置里。客户端那条只给一个发布页入口 —— 桌面端由安装包 / 包管理器更新，
  * 应用不该去换自己的二进制（换到一半失败，用户手上就剩一个跑不起来的东西）。
+ *
+ * 「更新方式」只作用于客户端：服务端不主动检查更新 —— 升级要在服务器上动手，
+ * 归连着服务器的那个人管，客户端不替他盯。
  */
 function UpdateCard(): React.JSX.Element {
   const { settings, patch } = useSettings()
-  const guest = useAuth((s) => s.guest)
+  const { backendVersion, guest } = useAuth()
+  // 本机版本走 app.info：它是本地的、必定拿得到（与 ClientUpdateModal 同一口径）
+  const info = useAsync<AppInfo>(() => window.songloft.app.info(), [])
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [clientOpen, setClientOpen] = useState(false)
 
   return (
     <Card title="更新">
-      {/* 「服务端更新」免登录时整行不摆：没有服务端可升级，而它下面每一次请求都要会话 */}
+      {/* 「服务端」免登录时整行不摆：没有服务端可升级，而它下面每一次请求都要会话 */}
       {guest ? null : (
         <Row
-          title="服务端更新"
+          title={
+            <>
+              服务端
+              {backendVersion ? (
+                <span className="badge" style={{ marginLeft: 8 }}>
+                  {formatVersion(backendVersion)}
+                </span>
+              ) : null}
+            </>
+          }
           desc="检查服务端有没有新版本；Docker 部署可以直接在线升级，也可以上传本地的二进制文件"
         >
           <button
@@ -3184,8 +3205,17 @@ function UpdateCard(): React.JSX.Element {
       )}
 
       <Row
-        title="客户端更新"
-        desc="桌面端从 GitHub Releases 分发：下载后下次启动会提示你打开安装程序，应用不会自己替换自身的二进制"
+        title={
+          <>
+            客户端
+            {info.data ? (
+              <span className="badge" style={{ marginLeft: 8 }}>
+                {formatVersion(info.data.version)}
+              </span>
+            ) : null}
+          </>
+        }
+        desc="桌面端从 GitHub Releases 分发，下载后下次启动会提示您更新程序。"
       >
         <button type="button" className="btn" onClick={() => setClientOpen(true)}>
           <IconRefresh size={15} />
@@ -3193,15 +3223,12 @@ function UpdateCard(): React.JSX.Element {
         </button>
       </Row>
 
-      {/* 不再挂在「客户端更新」下面：它管的是上面**两行**（服务端与客户端各查一次） */}
-      <Row
-        title="启动时自动检查更新"
-        desc="每次启动各查一次服务端与客户端：有新版本才提示，连不上就不出声"
-      >
-        <Switch
-          checked={settings.autoCheckUpdate}
-          onChange={(next) => void patch({ autoCheckUpdate: next })}
-          ariaLabel="启动时自动检查更新"
+      <Row title="更新方式" desc="只作用于客户端，服务端不主动检查更新。">
+        <SettingSelect
+          value={settings.updateMode}
+          options={UPDATE_MODE_OPTIONS}
+          ariaLabel="更新方式"
+          onChange={(next) => void patch({ updateMode: next })}
         />
       </Row>
 
@@ -3216,11 +3243,27 @@ function UpdateCard(): React.JSX.Element {
  *
  * **仍然不替换自身的二进制**：桌面端的二进制归安装包与包管理器管 —— 应用替自己换一旦半路
  * 失败（下载中断、目录不可写、替换到一半），用户手上就剩一个跑不起来的东西，而且没有回滚。
- * 所以这里只把安装包下到「下载」目录，再用系统默认程序把它打开（NSIS 安装向导 / 软件中心 /
- * 挂载 dmg），装与不装仍由人点（见 src/main/update-download.ts）。
+ * 所以这里只把安装包下到应用数据目录的 updates/，装与不装仍由人点（见 src/main/update-download.ts）：
+ * 安装器形态（NSIS exe / dmg / deb）可以「立即更新」拉起系统安装程序；免安装形态
+ * （AppImage / 免安装 zip）没有「装」这一步，只给「打开所在文件夹」由用户自己动手。
  *
  * 状态放在 useClientUpdate 里而不是这里：下载动辄几分钟，而弹窗随时会被关掉。
  */
+
+/**
+ * 安装器形态的扩展名 —— 这些才接得进系统安装程序（NSIS 向导 / dmg / 软件中心）。
+ *
+ * AppImage、免安装 zip、tar.gz 这类**没有安装语义**：没有「装」这一步，拉起安装程序
+ * 也接不住，所以「立即更新」只对安装器形态摆出来（挑包口径见 shared/update.ts 的
+ * installableExtensions —— AppImage 宿主挑的是 .appimage，正好落进免安装那一半）。
+ */
+const INSTALLER_EXTENSIONS = ['.exe', '.dmg', '.deb'] as const
+
+function isInstallerFile(name: string): boolean {
+  const lower = name.toLowerCase()
+  return INSTALLER_EXTENSIONS.some((ext) => lower.endsWith(ext))
+}
+
 function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Element {
   // 本机版本走 app.info：它是本地的、必定拿得到，于是检查失败时这张表也不会空着
   const info = useAsync(() => window.songloft.app.info(), [])
@@ -3229,7 +3272,6 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
   const checkNow = useClientUpdate((s) => s.checkNow)
   const download = useClientUpdate((s) => s.download)
   const cancel = useClientUpdate((s) => s.cancel)
-  const openFile = useClientUpdate((s) => s.openFile)
   const revealFile = useClientUpdate((s) => s.revealFile)
   const install = useClientUpdate((s) => s.installPending)
 
@@ -3248,15 +3290,16 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
       : null
   const canDownload = newer && asset !== null && !downloading && file === null
 
+  // 下载到的文件名与 check.asset 同源（主进程就是按它落的名）；asset 不在时从路径兜底
+  const downloadedName = check?.asset?.name ?? file?.path.split(/[\\/]/).pop() ?? ''
+  const installer = file !== null && isInstallerFile(downloadedName)
+
   return (
     <Modal
       title="客户端更新"
       onClose={onClose}
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose}>
-            关闭
-          </button>
           {/* 检查失败时也给这条路：网络能到发布页而查不到 API 是常见情形（代理只挑了 API） */}
           <button
             type="button"
@@ -3280,6 +3323,33 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
               下载安装包
             </button>
           ) : null}
+          {/* 只有安装器形态才接得进系统安装程序；免安装形态（AppImage / 绿色版）只给「打开所在文件夹」 */}
+          {installer ? (
+            <button
+              type="button"
+              className="btn"
+              data-variant="primary"
+              onClick={() => void install()}
+              disabled={installing}
+            >
+              <IconRefresh size={15} />
+              {installing ? '正在启动安装程序…' : '立即更新'}
+            </button>
+          ) : null}
+          {file ? (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void revealFile()}
+              disabled={installing}
+            >
+              <IconFolderOpen size={15} />
+              打开所在文件夹
+            </button>
+          ) : null}
+          <button type="button" className="btn" onClick={onClose}>
+            关闭
+          </button>
         </>
       }
     >
@@ -3373,48 +3443,13 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
             <IconCheck size={15} />
             <span>安装包已保存到 {file.path}</span>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-            <button
-              type="button"
-              className="btn"
-              data-variant="primary"
-              onClick={() => void install()}
-              disabled={installing}
-            >
-              <IconRefresh size={15} />
-              {installing ? '正在启动安装程序…' : '立即更新'}
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => void openFile()}
-              disabled={installing}
-            >
-              <IconDownload size={15} />
-              打开安装包
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => void revealFile()}
-              disabled={installing}
-            >
-              <IconFolderOpen size={15} />
-              打开所在文件夹
-            </button>
-          </div>
-          <p className="field-hint" style={{ marginTop: 8 }}>
-            点「立即更新」会启动系统安装程序并关闭应用。也可以先「打开安装包」手动安装，
-            应用不会自己替换自身的二进制。
+          <p className="field-hint">
+            {installer
+              ? '点「立即更新」会启动系统安装程序并关闭应用。也可以到所在文件夹手动安装，应用不会自己替换自身的二进制。'
+              : '这份安装包没有安装语义（AppImage / 免安装版）：到所在文件夹里运行或解压来用新版，应用不会自己替换自身的二进制。'}
           </p>
         </>
       ) : null}
-
-      <p className="field-hint" style={{ marginTop: 10 }}>
-        这里只把安装包下到「下载」目录，安装交给系统安装程序 —— 应用不去替换自身的二进制：
-        换到一半失败会留下一个跑不起来的客户端，而且没有回滚。没点「立即更新」就关掉应用的话，
-        下次启动会再提示一次；在安装器里取消不会影响当前版本。
-      </p>
     </Modal>
   )
 }

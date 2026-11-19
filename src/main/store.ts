@@ -54,6 +54,16 @@ interface ConfigFile {
    * ★ 必须落盘：从下载完到下次启动之间进程会重启，只放内存就等于没记。
    */
   pendingUpdate: PendingClientUpdate | null
+  /**
+   * 已经下载过、仍在磁盘上的安装包（目标版本 tag → 下载记录）。
+   *
+   * ★ 与 pendingUpdate 的分工：后者只记「下次启动要提示安装」的**那一份**（装过就清），
+   *   这里记的是**所有**下过的版本 —— 「已下载的版本号不重复下载」靠它判（见
+   *   main/update-download.ts 与 index.ts 的 clientUpdateDownload）。
+   * ★ 同为内部簿记，不属于 AppSettings：版本与路径只有主进程读写，混进设置等于把它
+   *   变成「可改的偏好」。
+   */
+  downloadedUpdates: Record<string, PendingClientUpdate>
 }
 
 const DEFAULT_WINDOW: WindowBounds = { width: 1440, height: 920, maximized: false }
@@ -76,7 +86,8 @@ function emptyConfig(): ConfigFile {
     credentials: {},
     window: { ...DEFAULT_WINDOW },
     renderCache: { ...EMPTY_RENDER_CACHE_STATE },
-    pendingUpdate: null
+    pendingUpdate: null,
+    downloadedUpdates: {}
   }
 }
 
@@ -101,6 +112,20 @@ function pendingUpdateOf(value: unknown): PendingClientUpdate | null {
     size: raw.size,
     downloadedAt: raw.downloadedAt
   }
+}
+
+/**
+ * 已下载安装包的形状归一：键与记录里的版本必须一致，记录本身过一遍 pendingUpdateOf。
+ * 对不上的整条当没记过 —— 宁可重下一次，也不要拿坏记录去碰文件系统。
+ */
+function downloadedUpdatesOf(value: unknown): Record<string, PendingClientUpdate> {
+  if (!value || typeof value !== 'object') return {}
+  const result: Record<string, PendingClientUpdate> = {}
+  for (const [version, item] of Object.entries(value as Record<string, unknown>)) {
+    const record = pendingUpdateOf(item)
+    if (record && record.version === version) result[version] = record
+  }
+  return result
 }
 
 /** 版本记录里那两张表只要「字符串 → 字符串」，别的形状一律当没写过 */
@@ -135,6 +160,15 @@ export class ConfigStore {
        * 而用户要一直点到它才会被纠回来。归一放在这一层，而不是让每个消费者各自兜底。
        */
       if (!PLAY_MODES.includes(settings.playMode)) settings.playMode = DEFAULT_SETTINGS.playMode
+      /*
+       * 「启动时自动检查更新」的开关（boolean）换成了三档的「更新方式」（见 AppSettings.updateMode）：
+       * 老配置里明确存着 false 的接成「关闭更新」，true 与缺失都落默认档「仅检查更新」。
+       * 旧键留在文件里无害 —— patch 是合并不删键，而没人再读它。
+       */
+      const legacySettings = persisted as Partial<AppSettings> & { autoCheckUpdate?: boolean }
+      if (legacySettings.updateMode === undefined && legacySettings.autoCheckUpdate === false) {
+        settings.updateMode = 'off'
+      }
       /*
        * 对象型的设置项要**逐项**归一：上面那次展开是浅的，老配置里若只存了半截
        * （这一项此前还带过 `present` / `name` 两个字段），缺的那几档就是 undefined ——
@@ -183,7 +217,8 @@ export class ConfigStore {
           backend: stringMap(raw.renderCache?.backend),
           plugins: stringMap(raw.renderCache?.plugins)
         },
-        pendingUpdate: pendingUpdateOf(raw.pendingUpdate)
+        pendingUpdate: pendingUpdateOf(raw.pendingUpdate),
+        downloadedUpdates: downloadedUpdatesOf(raw.downloadedUpdates)
       }
     } catch (error) {
       console.error('[store] 配置读取失败，回退到默认值', error)
@@ -328,6 +363,18 @@ export class ConfigStore {
   setPendingUpdate(update: PendingClientUpdate | null): void {
     this.mutate((data) => {
       data.pendingUpdate = update ? { ...update } : null
+    })
+  }
+
+  // ── 已下载过的安装包（同版本去重，见 main/update-download.ts）──────────────
+  getDownloadedUpdate(version: string): PendingClientUpdate | null {
+    const record = this.data.downloadedUpdates[version]
+    return record ? { ...record } : null
+  }
+
+  setDownloadedUpdate(update: PendingClientUpdate): void {
+    this.mutate((data) => {
+      data.downloadedUpdates[update.version] = { ...update }
     })
   }
 

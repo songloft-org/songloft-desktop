@@ -177,8 +177,9 @@ export interface SongloftBridge {
     /**
      * 把安装包下到本机「下载」目录。
      *
-     * **只下载，不替换自身二进制**（理由见 src/main/update-download.ts）：下好之后由
-     * openClientUpdate 把它交给系统安装程序；关掉应用之后那份包由主进程记着，下次启动时经
+     * **只下载，不替换自身二进制**（理由见 src/main/update-download.ts）：下好之后
+     * 「立即更新」把它交给系统安装程序（免安装形态则由用户在所在文件夹里自己动手）；
+     * 关掉应用之后那份包由主进程记着，下次启动时经
      * pendingClientUpdate → installPendingClientUpdate 再问一次。进度经 onClientUpdateProgress
      * 推回来 ——
      * 下载不随弹窗开关中断，所以进度必须由订阅方自己收着，而不是由发起方等 promise。
@@ -186,8 +187,6 @@ export interface SongloftBridge {
     downloadClientUpdate(request: ClientUpdateDownloadRequest): Promise<ClientUpdateDownloadResult>
     /** 取消正在跑的下载（没在跑时什么也不做） */
     cancelClientUpdate(): Promise<void>
-    /** 用系统默认程序打开刚下好的安装包；没下过时抛错 */
-    openClientUpdate(): Promise<void>
     /** 在文件管理器里定位刚下好的安装包 */
     revealClientUpdate(): Promise<void>
     /**

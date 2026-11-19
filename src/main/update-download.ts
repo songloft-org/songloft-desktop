@@ -4,9 +4,13 @@
  * **不做自替换**：桌面端的二进制归安装包与包管理器管。应用替自己换二进制一旦半路失败
  * （下载中断、目录不可写、替换到一半），用户手上就剩一个跑不起来的东西，而且没有回滚 ——
  * AppImage 那套自更新正是「先删掉旧文件，再移入新文件」。所以这里只负责把安装包落进
- * 「下载」目录，再用系统默认程序把它打开（NSIS 安装向导 / 软件中心 / 挂载 dmg）。
- * 本次会话里下完可以立刻打开；关掉应用之后那一份由 main/pending-update.ts 记着，
- * 下次启动时再问一次。
+ * 应用数据目录下的 updates/（见 updatesDir），装与不装由用户决定：安装器形态
+ * （NSIS exe / dmg / deb）可以「立即更新」拉起系统安装程序，免安装形态（AppImage /
+ * 免安装 zip）到所在文件夹里自己动手。关掉应用之后那一份由 main/pending-update.ts
+ * 记着，下次启动时再问一次。
+ *
+ * **同版本不重复下载**：落过盘的版本由 ConfigStore 记着（downloadedUpdates），调用方
+ * 在进来之前先查一遍 —— 文件还在就直接复用，不走网络。
  *
  * 两条通路（配置的那条代理 → 直连）的取舍在 net-path.ts 里，这里只管落盘、进度与校验。
  */
@@ -22,6 +26,7 @@ import type {
   ClientUpdateDownloadResult,
   ClientUpdateProgress
 } from '@shared/ipc'
+import type { PendingClientUpdate } from '@shared/update'
 
 import { abortError, getStream, noteProxyFallback, routesFor, type NetRoute } from './net-path'
 import { planProxies } from './proxy'
@@ -39,10 +44,21 @@ const PROGRESS_INTERVAL_MS = 200
 let current: AbortController | null = null
 
 /**
+ * 安装包的落盘目录：应用数据目录下的 updates/。
+ *
+ * 用它而不是系统的「下载」目录：安装包是**应用自己的持久化产物**（同一版本下过一次
+ * 就不重复下、关掉应用之后还要拿它提示安装），跟着 userData 走才不会被用户随手清掉，
+ * 也不会和用户自己下载的东西混在一起。
+ */
+export function updatesDir(): string {
+  return join(app.getPath('userData'), 'updates')
+}
+
+/**
  * 上一次下好、还没被用掉的那个文件。
  *
- * 「打开安装包」「打开所在文件夹」都不接受渲染层传路径：那等于给它一个任意文件打开的口子
- * （`shell.openPath` 能拉起任何东西）。只认这里记下的那一个。
+ * 「打开所在文件夹」不接受渲染层传路径：那等于给它一个任意文件打开的口子
+ * （`shell.showItemInFolder` 能定位任何东西）。只认这里记下的那一个。
  */
 let lastFile: string | null = null
 
@@ -83,7 +99,7 @@ function validateAssetUrl(raw: string): string {
   return url.toString()
 }
 
-/** 下载目录里挑一个还不存在的名字（同名文件可能是上一次下的同一个版本） */
+/** 更新目录里挑一个还不存在的名字（同名文件可能是上一次下的同一个版本） */
 async function uniquePath(dir: string, name: string): Promise<string> {
   const dot = name.lastIndexOf('.')
   const stem = dot > 0 ? name.slice(0, dot) : name
@@ -97,7 +113,7 @@ async function uniquePath(dir: string, name: string): Promise<string> {
       return candidate
     }
   }
-  throw new Error('下载目录里同名的文件太多了，先清一清')
+  throw new Error('更新目录里同名的文件太多了，先清一清')
 }
 
 function isAbort(error: unknown): boolean {
@@ -228,7 +244,7 @@ function transfer(
 /**
  * 下载安装包：先按配置的通路试，失败再直连一次。
  *
- * 失败的那条通路留下的 `.part` 一律删掉 —— 半份安装包留在下载目录里比没有更糟：
+ * 失败的那条通路留下的 `.part` 一律删掉 —— 半份安装包留在更新目录里比没有更糟：
  * 用户会以为它就是完整的。
  */
 export async function downloadClientUpdate(
@@ -249,7 +265,7 @@ export async function downloadClientUpdate(
   current = controller
 
   try {
-    const dir = app.getPath('downloads')
+    const dir = updatesDir()
     await mkdir(dir, { recursive: true })
 
     const file = await uniquePath(dir, safeName(request.asset.name))
@@ -294,16 +310,30 @@ export function cancelClientUpdate(): void {
   current?.abort()
 }
 
-/** 用系统默认程序打开刚下好的安装包（结果由系统决定：安装向导 / 软件中心 / 挂载 dmg） */
-export async function openDownloadedUpdate(): Promise<void> {
-  if (!lastFile) throw new Error('还没有下载好的安装包')
-  const failure = await shell.openPath(lastFile)
-  // openPath 失败时返回一句错误描述（成功是空串），不会抛
-  if (failure) throw new Error(`打不开安装包：${failure}`)
-}
-
 /** 在文件管理器里定位刚下好的安装包 */
 export function revealDownloadedUpdate(): void {
   if (!lastFile) throw new Error('还没有下载好的安装包')
   shell.showItemInFolder(lastFile)
+}
+
+/**
+ * 把一份**跨启动**记下的下载记录接回本模块：调用方确认同版本已下载过、且文件完好时，
+ * 不再走网络，直接把它当作「刚下好的那一份」（打开 / 定位都认 lastFile）。
+ */
+export function reuseDownloadedUpdate(record: PendingClientUpdate): void {
+  lastFile = record.path
+}
+
+/**
+ * 一份已下载记录指向的文件是否还完好（存在、是普通文件、大小与记录一致）。
+ *
+ * 大小是下载时实打实写进去的字节数：对不上就是被删过、截断过或换过 —— 那就得重下。
+ */
+export async function downloadedFileIntact(record: PendingClientUpdate): Promise<boolean> {
+  try {
+    const info = await stat(record.path)
+    return info.isFile() && info.size === record.size
+  } catch {
+    return false
+  }
 }

@@ -121,7 +121,6 @@ const bridge: SongloftBridge = {
     downloadClientUpdate: (request: ClientUpdateDownloadRequest) =>
       ipcRenderer.invoke(IPC.clientUpdateDownload, request) as Promise<ClientUpdateDownloadResult>,
     cancelClientUpdate: () => ipcRenderer.invoke(IPC.clientUpdateCancel) as Promise<void>,
-    openClientUpdate: () => ipcRenderer.invoke(IPC.clientUpdateOpen) as Promise<void>,
     revealClientUpdate: () => ipcRenderer.invoke(IPC.clientUpdateReveal) as Promise<void>,
     pendingClientUpdate: () =>
       ipcRenderer.invoke(IPC.clientUpdatePending) as Promise<PendingClientUpdate | null>,

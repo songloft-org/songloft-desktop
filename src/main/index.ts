@@ -27,15 +27,17 @@ import {
   type ServerEntry,
   type TraySnapshot
 } from '@shared/ipc'
+import type { PendingClientUpdate } from '@shared/update'
 import { installAppMenu } from './app-menu'
 import { applyLocalCacheLimit, clearLocalCache, readLocalCache } from './cache'
 import { discoverGithubPlugins } from './github-discovery'
 import { checkClientUpdate } from './release'
 import {
   cancelClientUpdate,
+  downloadedFileIntact,
   downloadClientUpdate,
-  openDownloadedUpdate,
-  revealDownloadedUpdate
+  revealDownloadedUpdate,
+  reuseDownloadedUpdate
 } from './update-download'
 import { dlnaController } from './dlna'
 import { openTextFile, saveTextFile } from './files'
@@ -678,31 +680,39 @@ function registerIpcHandlers(): void {
    * 安装包下载。进度发回**发起下载的那个窗口**（`event.sender`）而不是 sendToRenderer：
    * 这条流只属于它，发广播会让迷你窗也收到一份没人看的进度。
    *
-   * 下完之后**落一份待安装记录**（见 main/pending-update.ts）：下次启动时渲染层来问，
-   * 主进程校验文件还在就提示用户打开安装程序。只在目标版本确实比当前新时记 —— 记录一旦
-   * 落盘，下次启动会拿它去拉起安装器，装一个同版本或旧版本没有意义。
+   * **同一版本不重复下载**：先查落盘记录（ConfigStore.downloadedUpdates），文件还在且
+   * 大小对得上就直接复用那一份，不走网络 —— 「自动下载更新」每次启动都会走到这里，
+   * 没有这一层就成了每天重下一遍。
+   *
+   * 下完之后**落两份记录**：待安装记录（main/pending-update.ts，下次启动时提示安装）
+   * 与已下载版本记录（上面的去重依据）。前者只在目标版本确实比当前新时记 —— 拿它去
+   * 拉起安装器装一个同版本或旧版本没有意义；后者无条件记，去重只看「下没下过」。
    */
   ipcMain.handle(IPC.clientUpdateDownload, async (event, request: ClientUpdateDownloadRequest) => {
+    const known = request.version ? store.getDownloadedUpdate(request.version) : null
+    if (known && (await downloadedFileIntact(known))) {
+      reuseDownloadedUpdate(known)
+      if (isNewerVersion(request.version, app.getVersion())) store.setPendingUpdate(known)
+      return { path: known.path, bytes: known.size }
+    }
+
     const result = await downloadClientUpdate(request, (progress) => {
       if (!event.sender.isDestroyed()) event.sender.send(IPC.onClientUpdateProgress, progress)
     })
+    const record: PendingClientUpdate = {
+      path: result.path,
+      version: request.version,
+      name: request.asset.name,
+      size: result.bytes,
+      downloadedAt: Date.now()
+    }
+    store.setDownloadedUpdate(record)
     if (request.version && isNewerVersion(request.version, app.getVersion())) {
-      store.setPendingUpdate({
-        path: result.path,
-        version: request.version,
-        name: request.asset.name,
-        size: result.bytes,
-        downloadedAt: Date.now()
-      })
+      store.setPendingUpdate(record)
     }
     return result
   })
   ipcMain.handle(IPC.clientUpdateCancel, () => cancelClientUpdate())
-  ipcMain.handle(IPC.clientUpdateOpen, async () => {
-    await openDownloadedUpdate()
-    // 用户已经在本会话里打开过安装器：下次启动不必再提示一次
-    store.setPendingUpdate(null)
-  })
   ipcMain.handle(IPC.clientUpdateReveal, () => revealDownloadedUpdate())
   /*
    * 待安装记录：读的时候主进程会顺手校验（文件还在、大小没变、版本仍更新），不可用的

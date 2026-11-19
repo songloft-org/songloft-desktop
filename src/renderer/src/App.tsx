@@ -28,7 +28,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { isNewerVersion } from '@shared/version'
-import { checkServerUpgrade, getGithubProxy, getHttpProxy } from './api/endpoints'
+import { getGithubProxy, getHttpProxy } from './api/endpoints'
 import { AddToPlaylistDialog } from './components/AddToPlaylistDialog'
 import { DlnaDialog } from './components/DlnaDialog'
 import { CommandPalette } from './components/CommandPalette'
@@ -80,48 +80,48 @@ import { routeFromPath, useUi, type NativeRoute, type Surface } from './state/us
 let bootstrapped = false
 
 /**
- * 启动时悄悄查一次更新：**服务端与客户端各查一次**（「关于与更新」里那个开关控制它）。
+ * 启动时悄悄查一次**客户端**更新（「关于与更新」里那个「更新方式」控制它）。
  *
  * 为什么只查一次、只在启动时查：一个版本能用很久，更密的轮询除了给 GitHub 刷请求
- * （它还有频率限制）没有别的作用；真想主动看，设置里那两个「检查更新」会明说。
+ * （它还有频率限制）没有别的作用；真想主动看，设置里那颗「检查更新」会明说。
+ *
+ * **服务端不在这一条里**：服务端的升级要在服务器上动手，归连着服务器的人管 ——
+ * 客户端不替他盯，设置里那颗「检查更新」就是给他用的。
  *
  * **全程静默**：没有新版本不说话、连不上也不说话 —— 启动时的后台动作不该冒泡成人要处理的
  * 东西。真有状况，去设置里点一次就知道原因。
- *
- * 两件事各自独立（`Promise.all` + 各自 catch）：客户端那次是主进程直连 GitHub，服务端那次
- * 是问后端 —— 它们的失败原因完全不同，让一边拖垮另一边没有道理。
  */
 async function checkUpdatesInBackground(): Promise<void> {
-  if (!useSettings.getState().settings.autoCheckUpdate) return
+  const { updateMode } = useSettings.getState().settings
+  if (updateMode === 'off') return
   const client = requireClient()
 
-  // 代理拿不到（后端不可达）就直连；服务端那次也一样把代理传过去 —— 后端不会自己去读那项配置
+  // 代理拿不到（后端不可达）就直连
   const [githubProxy, httpProxy] = await Promise.all([
     getGithubProxy(client).catch(() => ''),
     getHttpProxy(client).catch(() => '')
   ])
-  const [release, upgrade, info] = await Promise.all([
+  const [release, info] = await Promise.all([
     window.songloft.app.checkClientUpdate({ githubProxy, httpProxy }).catch(() => null),
-    checkServerUpgrade(client, githubProxy).catch(() => null),
     window.songloft.app.info().catch(() => null)
   ])
 
-  if (release && info && isNewerVersion(release.latestTag, info.version)) {
-    toast(
-      '客户端有新版本',
-      'info',
-      `${formatVersion(release.latestTag)} 已发布，可在「设置 → 关于与更新」查看`
-    )
+  if (!(release && info && isNewerVersion(release.latestTag, info.version))) return
+
+  if (updateMode === 'download') {
+    /*
+     * 自动下载：借 useClientUpdate 那条现成的链路 —— 进度、同版本去重、待安装记录都在
+     * 那一侧，它自己会在下完时 toast，这里不再多嘴。
+     */
+    useClientUpdate.setState({ check: release })
+    await useClientUpdate.getState().download()
+    return
   }
-  if (upgrade?.has_update && upgrade.latest_version) {
-    toast(
-      '服务端有新版本',
-      'info',
-      upgrade.is_docker
-        ? `${formatVersion(upgrade.latest_version)}，可在「设置 → 关于与更新」升级`
-        : `${formatVersion(upgrade.latest_version)}（服务端不是容器部署，需在服务器上替换二进制）`
-    )
-  }
+  toast(
+    '客户端有新版本',
+    'info',
+    `${formatVersion(release.latestTag)} 已发布，可在「设置 → 关于与更新」查看`
+  )
 }
 
 /** 只在输入类元素之外响应空格这类「会打字的键」 */

@@ -16,6 +16,7 @@ import { app, shell } from 'electron'
 import { isPendingUpdateUsable, type PendingClientUpdate } from '@shared/update'
 
 import type { ConfigStore } from './store'
+import { updatesDir } from './update-download'
 
 /** 本机形态（与 main/release.ts 挑包时的口径一致） */
 function hostNow(): { platform: string; arch: string; appImage: boolean } {
@@ -27,14 +28,14 @@ function hostNow(): { platform: string; arch: string; appImage: boolean } {
 }
 
 /**
- * 记录指向的文件是否仍在「下载」目录里。
+ * 记录指向的文件是否仍在应用数据目录的 updates/ 里（安装包的落盘处，见 update-download.ts）。
  *
  * ★ 不能让这份可改的 JSON 把 `shell.openPath` 引到任意路径上 —— 那等于给了一个
  *   「打开 / 执行任意文件」的口子。记录只该指向我们当初下载的那一处。
  */
-function insideDownloads(target: string): boolean {
-  const downloads = resolve(app.getPath('downloads'))
-  const rel = relative(downloads, resolve(target))
+function insideUpdatesDir(target: string): boolean {
+  const dir = resolve(updatesDir())
+  const rel = relative(dir, resolve(target))
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
 }
 
@@ -42,7 +43,7 @@ function insideDownloads(target: string): boolean {
  * 读一次待安装记录；不可用的**当场清掉**。
  *
  * 不可用的情形：文件被删 / 被移走 / 被截断或换掉、目标版本已经不比当前版本新
- * （用户可能自己升级过了）、路径跑出了下载目录。这些情况下继续提示只会让人以为
+ * （用户可能自己升级过了）、路径跑出了更新目录。这些情况下继续提示只会让人以为
  * 出了问题 —— 清除后返回 null，界面就当没有这回事。
  */
 export async function readPendingUpdate(store: ConfigStore): Promise<PendingClientUpdate | null> {
@@ -60,7 +61,7 @@ export async function readPendingUpdate(store: ConfigStore): Promise<PendingClie
 
   const usable =
     size >= 0 &&
-    insideDownloads(pending.path) &&
+    insideUpdatesDir(pending.path) &&
     isPendingUpdateUsable(pending, hostNow(), app.getVersion(), size)
 
   if (!usable) {
