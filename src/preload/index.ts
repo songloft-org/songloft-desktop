@@ -125,8 +125,8 @@ const bridge: SongloftBridge = {
     revealClientUpdate: () => ipcRenderer.invoke(IPC.clientUpdateReveal) as Promise<void>,
     pendingClientUpdate: () =>
       ipcRenderer.invoke(IPC.clientUpdatePending) as Promise<PendingClientUpdate | null>,
-    acceptPendingClientUpdate: () =>
-      ipcRenderer.invoke(IPC.clientUpdatePendingAccept) as Promise<void>,
+    installPendingClientUpdate: () =>
+      ipcRenderer.invoke(IPC.clientUpdatePendingInstall) as Promise<void>,
     onClientUpdateProgress: (handler) =>
       subscribe<ClientUpdateProgress>(IPC.onClientUpdateProgress, handler)
   },

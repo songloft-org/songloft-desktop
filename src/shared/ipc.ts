@@ -88,8 +88,13 @@ export const IPC = {
    *   所以这里返回的是「真能装的那一份」，界面不必再判断一遍。
    */
   clientUpdatePending: 'app:client-update-pending',
-  /** 打开那份待安装的安装程序（成功即清掉记录；用户在安装器里取消不影响当前版本） */
-  clientUpdatePendingAccept: 'app:accept-pending-update',
+  /**
+   * 打开待安装的安装程序并**退出应用**（「立即更新 / 立即安装」）。
+   *
+   * ★ 顺序是先拉起安装器、再退出自己：安装器是独立进程，应用退出不会把它带走。
+   *   用户在安装器里取消，下次启动的还是旧版本（应用既没替换文件，也没留下半装状态）。
+   */
+  clientUpdatePendingInstall: 'app:install-pending-update',
   /**
    * 主进程代查「GitHub 发现」（插件商店里的那一份社区来源）。
    *

@@ -179,7 +179,7 @@ export interface SongloftBridge {
      *
      * **只下载，不替换自身二进制**（理由见 src/main/update-download.ts）：下好之后由
      * openClientUpdate 把它交给系统安装程序；关掉应用之后那份包由主进程记着，下次启动时经
-     * pendingClientUpdate → acceptPendingClientUpdate 再问一次。进度经 onClientUpdateProgress
+     * pendingClientUpdate → installPendingClientUpdate 再问一次。进度经 onClientUpdateProgress
      * 推回来 ——
      * 下载不随弹窗开关中断，所以进度必须由订阅方自己收着，而不是由发起方等 promise。
      */
@@ -198,12 +198,12 @@ export interface SongloftBridge {
      */
     pendingClientUpdate(): Promise<PendingClientUpdate | null>
     /**
-     * 打开待安装的安装程序。
+     * 打开待安装的安装程序并**退出应用**（「立即更新 / 立即安装」）。
      *
-     * 只 `shell.openPath` 拉起系统安装程序（NSIS 向导 / 软件中心 / 挂载 dmg）——
-     * **不替换自身二进制**。用户在安装器里取消，当前版本照常运行。
+     * ★ 只拉起系统安装程序，不替换自身二进制；退出发生在安装器已经起来之后。
+     *   用户在安装器里取消，下次启动的还是旧版本。
      */
-    acceptPendingClientUpdate(): Promise<void>
+    installPendingClientUpdate(): Promise<void>
     /** 下载进度；返回取消订阅函数 */
     onClientUpdateProgress(handler: (progress: ClientUpdateProgress) => void): () => void
   }

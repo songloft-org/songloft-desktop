@@ -71,10 +71,11 @@ export async function readPendingUpdate(store: ConfigStore): Promise<PendingClie
 }
 
 /**
- * 打开安装程序。
+ * 打开安装程序并清掉记录。
  *
- * 成功后**立刻清掉记录**：装与不装由安装器决定，应用不再追问。用户在安装器里点了取消，
- * 这个应用仍然完整地跑在旧版本上 —— 我们既没退出，也没替换任何文件。
+ * ★ 只负责「打开 + 清记录」，**退出由调用方决定**（`clientUpdatePendingInstall` 在回包后
+ *   `app.quit()`）。用户在安装器里点了取消，下次启动的还是旧版本 —— 这里既没替换任何文件，
+ *   也没留下半装状态。
  */
 export async function acceptPendingUpdate(store: ConfigStore): Promise<void> {
   const pending = await readPendingUpdate(store)

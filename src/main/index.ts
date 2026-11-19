@@ -709,7 +709,17 @@ function registerIpcHandlers(): void {
    * 记录当场清掉。渲染层拿到的就是「真能装的那一份」，界面不必再判断一遍。
    */
   ipcMain.handle(IPC.clientUpdatePending, () => readPendingUpdate(store))
-  ipcMain.handle(IPC.clientUpdatePendingAccept, () => acceptPendingUpdate(store))
+  /*
+   * 「立即更新 / 立即安装」：拉起安装器 → 回包 → 退出应用。
+   *
+   * ★ 顺序不能反：安装器是独立进程，应用退出不会把它带走；先退出就没人去开它。
+   * ★ 退出延后 300ms：这条 invoke 的 promise 得先回包，否则渲染层会把它当成一次失败
+   *   弹红字 —— 而它其实已经成功了。
+   */
+  ipcMain.handle(IPC.clientUpdatePendingInstall, async () => {
+    await acceptPendingUpdate(store)
+    setTimeout(() => app.quit(), 300)
+  })
   ipcMain.handle(IPC.githubDiscovery, (_event, request: GithubDiscoveryRequest) =>
     discoverGithubPlugins(request)
   )

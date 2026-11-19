@@ -3218,12 +3218,14 @@ function UpdateCard(): React.JSX.Element {
 function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Element {
   // 本机版本走 app.info：它是本地的、必定拿得到，于是检查失败时这张表也不会空着
   const info = useAsync(() => window.songloft.app.info(), [])
-  const { check, checking, error, downloading, progress, file, downloadError } = useClientUpdate()
+  const { check, checking, error, downloading, progress, file, downloadError, installing } =
+    useClientUpdate()
   const checkNow = useClientUpdate((s) => s.checkNow)
   const download = useClientUpdate((s) => s.download)
   const cancel = useClientUpdate((s) => s.cancel)
   const openFile = useClientUpdate((s) => s.openFile)
   const revealFile = useClientUpdate((s) => s.revealFile)
+  const install = useClientUpdate((s) => s.installPending)
 
   useEffect(() => {
     // 每次打开都重新查一次：上一次的结果可能是几分钟前的，而这里本来就只有一个入口
@@ -3363,30 +3365,49 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
         <>
           <div className="probe-result" data-state="ok" style={{ marginTop: 10 }}>
             <IconCheck size={15} />
-            <span>安装包已保存到 {file.path}，下次启动会提示安装</span>
+            <span>安装包已保存到 {file.path}</span>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
             <button
               type="button"
               className="btn"
               data-variant="primary"
+              onClick={() => void install()}
+              disabled={installing}
+            >
+              <IconRefresh size={15} />
+              {installing ? '正在启动安装程序…' : '立即更新'}
+            </button>
+            <button
+              type="button"
+              className="btn"
               onClick={() => void openFile()}
+              disabled={installing}
             >
               <IconDownload size={15} />
               打开安装包
             </button>
-            <button type="button" className="btn" onClick={() => void revealFile()}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void revealFile()}
+              disabled={installing}
+            >
               <IconFolderOpen size={15} />
               打开所在文件夹
             </button>
           </div>
+          <p className="field-hint" style={{ marginTop: 8 }}>
+            点「立即更新」会启动系统安装程序并关闭应用。也可以先「打开安装包」手动安装，
+            应用不会自己替换自身的二进制。
+          </p>
         </>
       ) : null}
 
       <p className="field-hint" style={{ marginTop: 10 }}>
-        这里只把安装包下到「下载」目录；下次启动会再提示你打开系统安装程序 —— 应用不去替换
-        自身的二进制：换到一半失败会留下一个跑不起来的客户端，而且没有回滚。在安装器里取消
-        不会影响当前版本。
+        这里只把安装包下到「下载」目录，安装交给系统安装程序 —— 应用不去替换自身的二进制：
+        换到一半失败会留下一个跑不起来的客户端，而且没有回滚。没点「立即更新」就关掉应用的话，
+        下次启动会再提示一次；在安装器里取消不会影响当前版本。
       </p>
     </Modal>
   )

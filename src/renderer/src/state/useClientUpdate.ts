@@ -49,6 +49,12 @@ interface ClientUpdateState {
    *   这里只是那份记录在界面上的投影。
    */
   pending: PendingClientUpdate | null
+  /**
+   * 正在拉起安装程序（「立即更新 / 立即安装」）。
+   *
+   * ★ 成功后**不会重置**：主进程在回包后就会退出应用，重置只会让弹窗闪回一帧。
+   */
+  installing: boolean
 
   checkNow(): Promise<void>
   download(): Promise<void>
@@ -57,8 +63,13 @@ interface ClientUpdateState {
   revealFile(): Promise<void>
   /** 启动时拉一次「待安装记录」；没有或不可用就是 null（主进程会顺手清掉坏记录） */
   loadPending(): Promise<void>
-  /** 打开待安装的安装程序（不换自身二进制；用户在安装器里取消不影响当前版本） */
-  acceptPending(): Promise<void>
+  /**
+   * 打开安装程序并退出应用（「立即更新 / 立即安装」）。
+   *
+   * ★ 只拉起系统安装程序，不替换自身二进制；退出由主进程在回包后做。
+   *   用户在安装器里取消，下次启动的还是旧版本。
+   */
+  installPending(): Promise<void>
   /** 关掉本次提示；记录仍留在主进程，下次启动还会再问 */
   dismissPending(): void
 }
@@ -88,6 +99,7 @@ export const useClientUpdate = create<ClientUpdateState>((set, get) => ({
   file: null,
   downloadError: null,
   pending: null,
+  installing: false,
 
   async checkNow() {
     set({ checking: true, error: null })
@@ -132,7 +144,7 @@ export const useClientUpdate = create<ClientUpdateState>((set, get) => ({
         asset
       })
       set({ file })
-      toast('安装包已下载', 'success', '下次启动时会提示安装，也可以现在打开')
+      toast('安装包已下载', 'success', '可以立即更新，下次启动时也会再提示')
     } catch (err) {
       const message = err instanceof Error ? err.message : '下载失败'
       // 取消是用户自己按的，不该在界面上留一条红字
@@ -170,16 +182,17 @@ export const useClientUpdate = create<ClientUpdateState>((set, get) => ({
     }
   },
 
-  async acceptPending() {
+  async installPending() {
+    if (get().installing) return
+    set({ installing: true })
     try {
-      await window.songloft.app.acceptPendingClientUpdate()
-      set({ pending: null })
+      await window.songloft.app.installPendingClientUpdate()
       /*
-       * 安装器是独立进程，我们既没退出、也没替换任何文件 —— 所以这句要明确告诉用户
-       * 「现在用的还是旧版本」，否则他会盯着界面等它自己变。
+       * 主进程会在回包后退出应用：这里保持 installing，让按钮停在「正在启动安装程序…」，
+       * 不重置 —— 重置会让按钮闪回一帧，而窗口马上就不在了。
        */
-      toast('已打开安装程序', 'success', '取消安装不影响当前版本，装完后再重启即可')
     } catch (err) {
+      set({ installing: false })
       toast('打不开安装包', 'error', err instanceof Error ? err.message : undefined)
     }
   },
