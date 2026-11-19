@@ -110,10 +110,16 @@ linux:
   #   查不到任何文件（桌面集成工具照搬这套目录结构也一样查不到）。全部尺寸都落在声明过的目录里。
   icon: build/icons
   category: AudioVideo
-  synopsis: 插件化、无广告的免费音乐播放器
+  # ★ 这两段必须保持纯 ASCII：PackageKit 的 apt 后端读取本地 deb 的 Description 时，
+  #   会把每个非 ASCII 字节换成 '?'，GNOME「软件」的安装界面直接显示它返回的那一串问号。
+  #   实测中文 synopsis / description 会乱码；RFC 2047 encoded-word 也不会被解码。
+  #   应用内的中文文案不受影响，这里只管包元数据。
+  synopsis: Plugin-powered, ad-free music player
   description: >-
-    Songloft Desktop 是 Songloft 音乐播放器的 Electron 桌面客户端。连接自建 Songloft 后端
-    （默认 http://localhost:58091），支持曲库浏览、歌单管理、逐字歌词、文件夹浏览与播放队列。
+    Songloft Desktop is the Electron desktop client for Songloft, a plugin-powered,
+    ad-free music player. Connect to your own Songloft server (default: http://localhost:58091)
+    to browse your library, manage playlists, enjoy synced lyrics, browse folders and
+    build playback queues.
   # ★ 决定产物 .desktop 的文件名。默认 false → 会被命名成 executableName（songloft-desktop），
   #   与 app.setDesktopName() 报出的 app_id 对不上，GNOME 下静默回落成占位图标。
   #
@@ -136,7 +142,8 @@ linux:
       # ★ 必须等于身份（= package.json 的 desktopName）。
       StartupWMClass: io.github.edwinhuish.songloft-desktop
       Name: Songloft Desktop
-      Comment: 插件化、无广告的免费音乐播放器
+      # Comment 不在这里写：LinuxTargetHelper 在 spread entry 之后用上面的 description
+      # 直接覆盖它（同 MimeType 那条的坑），写了也是静默失效。
       Categories: AudioVideo;Audio;Player;
       Keywords: music;player;songloft;audio;
 
