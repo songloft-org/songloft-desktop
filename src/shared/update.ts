@@ -9,6 +9,8 @@
  * `Songloft-Desktop-<version>-<os>-<cpu>.<ext>`（三平台一个式样，release.yml 会断言它）。
  */
 
+import { isNewerVersion } from './version'
+
 /** release 里的一个资产文件 */
 export interface ClientUpdateAsset {
   /** 文件名（GitHub 上的原样，例如 Songloft-Desktop-1.3.3-windows-x64.exe） */
@@ -36,8 +38,11 @@ export interface UpdateHost {
  *   安装包与免安装 zip、macOS 有 dmg 与 zip），而它们是给不同用途的 —— zip 是给自动更新 /
  *   脚本化分发用的，用户点了没有安装语义。列进来只会把「下错了」变成一个常见结果。
  * ★ Linux 的 tar.gz 同理：解压即用，没有安装器可交接。
+ *
+ * ★ 挑包与「下次启动时那份已下载的包还能不能装」共用这一份口径（见
+ *   isPendingUpdateUsable）：两边各写一套的话，改名或加形态时只会改到一处。
  */
-function wantedExtensions(host: UpdateHost): string[] {
+export function installableExtensions(host: UpdateHost): string[] {
   if (host.platform === 'win32') return ['.exe']
   if (host.platform === 'darwin') return ['.dmg']
   if (host.platform === 'linux') return host.appImage ? ['.appimage'] : ['.deb']
@@ -106,9 +111,52 @@ export function pickUpdateAsset(
   assets: readonly ClientUpdateAsset[],
   host: UpdateHost
 ): ClientUpdateAsset | null {
-  for (const extension of wantedExtensions(host)) {
+  for (const extension of installableExtensions(host)) {
     const picked = pickByExtension(assets, extension, host.arch)
     if (picked) return picked
   }
   return null
+}
+
+/**
+ * 已经下载好、等着在下次启动时提示安装的那一份安装包。
+ *
+ * ★ 必须落盘（见 main/store.ts 的 ConfigStore）：从下载完到下次启动之间进程会重启，
+ *   只放内存等于没记 —— 而这份记录正是「下次启动还找得到它」的全部依据。
+ * ★ 只在主进程读写。渲染层拿到它只为「显示提示 + 提交用户的选择」，路径不回传给主进程。
+ */
+export interface PendingClientUpdate {
+  /** 安装包的绝对路径（主进程写下的，不是渲染层传来的） */
+  path: string
+  /** 目标版本 tag（例如 v1.3.3）；启动时再跟当前版本比一次 */
+  version: string
+  /** 发布资产的原文件名（提示里给人看） */
+  name: string
+  /** 下载完成时实际写入的字节数 —— 启动时用来确认文件还是完整的那一份 */
+  size: number
+  /** 下载完成时间（epoch ms） */
+  downloadedAt: number
+}
+
+/**
+ * 这份「待安装记录」还能不能用。
+ *
+ * 三个条件缺一不可：
+ *   · 目标版本仍**比当前版本新**（用户可能已经通过别的途径装上了，再提示就是骚扰）；
+ *   · 文件名仍是本机能装的那种形态（记录万一被改，也不能让它指向别的东西）；
+ *   · 文件大小与下载时一致（防被删、被截断、被换成了另一份）。
+ *
+ * ★ 「路径在不在下载目录、是不是普通文件」是主进程那一半（要碰文件系统与平台路径），
+ *   这里只做纯判定，于是可以直接单测。
+ */
+export function isPendingUpdateUsable(
+  pending: PendingClientUpdate,
+  host: UpdateHost,
+  currentVersion: string,
+  actualSize: number
+): boolean {
+  if (!isNewerVersion(pending.version, currentVersion)) return false
+  const name = pending.name.toLowerCase()
+  if (!installableExtensions(host).some((extension) => name.endsWith(extension))) return false
+  return actualSize === pending.size
 }

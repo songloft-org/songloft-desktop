@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { pickUpdateAsset, type ClientUpdateAsset } from './update'
+import { pickUpdateAsset, isPendingUpdateUsable, type ClientUpdateAsset } from './update'
 
 function asset(name: string): ClientUpdateAsset {
   return { name, size: 1024, url: `https://github.com/o/r/releases/download/v1.3.3/${name}` }
@@ -87,5 +87,54 @@ describe('pickUpdateAsset', () => {
     expect(
       pickUpdateAsset(RELEASE, { platform: 'freebsd', arch: 'x64', appImage: false })
     ).toBeNull()
+  })
+})
+
+describe('isPendingUpdateUsable', () => {
+  const host = { platform: 'win32', arch: 'x64', appImage: false }
+  const pending = {
+    path: 'C:\\Users\\me\\Downloads\\Songloft-Desktop-1.3.3-windows-x64.exe',
+    version: 'v1.3.3',
+    name: 'Songloft-Desktop-1.3.3-windows-x64.exe',
+    size: 1024,
+    downloadedAt: 1
+  }
+
+  it('版本更新、扩展名可装、大小一致时可用', () => {
+    expect(isPendingUpdateUsable(pending, host, '1.2.0', 1024)).toBe(true)
+  })
+
+  it('目标版本不新（已装或更旧）就不用再提示', () => {
+    expect(isPendingUpdateUsable(pending, host, '1.3.3', 1024)).toBe(false)
+    expect(isPendingUpdateUsable(pending, host, '1.4.0', 1024)).toBe(false)
+  })
+
+  it('文件大小对不上就不碰它（被删、被截断、被换掉）', () => {
+    expect(isPendingUpdateUsable(pending, host, '1.2.0', 1023)).toBe(false)
+    expect(isPendingUpdateUsable(pending, host, '1.2.0', 0)).toBe(false)
+  })
+
+  it('扩展名必须是本机能装的那种', () => {
+    const zip = { ...pending, name: 'Songloft-Desktop-1.3.3-windows-x64.zip' }
+    expect(isPendingUpdateUsable(zip, host, '1.2.0', 1024)).toBe(false)
+
+    // Linux 以 deb 运行时，AppImage 不是本机该装的那一种
+    const appImage = { ...pending, name: 'Songloft-Desktop-1.3.3-linux-x64.AppImage' }
+    expect(
+      isPendingUpdateUsable(
+        appImage,
+        { platform: 'linux', arch: 'x64', appImage: false },
+        '1.2.0',
+        1024
+      )
+    ).toBe(false)
+    expect(
+      isPendingUpdateUsable(
+        appImage,
+        { platform: 'linux', arch: 'x64', appImage: true },
+        '1.2.0',
+        1024
+      )
+    ).toBe(true)
   })
 })
