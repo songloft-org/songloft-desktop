@@ -8,7 +8,8 @@
  *   4. 切回本页时的**静默刷新**：重取一次，数据没变就一个字都不改（见下面那段说明）
  *
  * 「加载全部 ID」单独给一个方法：批量操作（全选加歌单）不该把几千首歌拉进内存，
- * 后端有 `/songs/ids` 只返回 id。
+ * 后端有 `/songs/ids` 只返回 id。而「播放全部」要的是**歌本身**（队列里得有对象），
+ * 那一条走 `loadAll`：分页一页页拉完，每页到达就回调一次，调用方边到达边接进队列。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -34,6 +35,13 @@ export interface SongListController {
   removeSongs: (ids: number[]) => void
   /** 取当前筛选条件下的全部 id（用于批量操作） */
   fetchAllIds: () => Promise<number[]>
+  /**
+   * 后台把**余下的分页一次拉完**，每拉到一页就把新增的那些回调一次。
+   *
+   * 「播放全部」用它：起播只等已经在手的那一页，剩下的边拉边接进播放队列
+   * （见 pages/LibraryPage）—— 用户不必等整份列表就位才开始听。
+   */
+  loadAll: (onPage?: (songs: Song[]) => void) => Promise<void>
   /** 已加载的页码（从 0 开始），调试用 */
   pages: number
 }
@@ -60,6 +68,16 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
   /** 手头这份列表的镜像：静默刷新与去重都要拿它比对（state 在闭包里是过期的那一份） */
   const songsRef = useRef<Song[]>([])
   const totalRef = useRef(0)
+  /**
+   * 后台「一次拉完」那一轮（见 loadAll）：null = 现在没有在拉。
+   *
+   * ★ 与 loadMore 互斥：两边同时以一页为步长推进时，后发的那一次会拿到同一个 offset，
+   *   去重之后那一页就白丢了（列表与总数从此对不上，而且没有任何报错）。
+   * ★ 存的是 promise（连同它属于哪一代）而不只是一个布尔量：第二次「播放全部」要能
+   *   **等这一轮拉完**，再把从那之后新到的歌补给它（见 loadAll 开头）；而那一代已经被
+   *   作废（换筛选 / 刷新）时，等它没有意义 —— 得按新的那一份重新起一轮。
+   */
+  const restRun = useRef<{ token: number; done: Promise<void> } | null>(null)
   /** 上一次请求的条件指纹；与这次相同 → 只因切回本页而重跑，走静默路径 */
   const lastKey = useRef<string | null>(null)
 
@@ -72,17 +90,21 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
   }, [])
 
   /**
+   * 取一页并并进列表里。
+   *
    * @param silent 切回本页时的静默刷新：只重取第一页与手头这份比，
    *   一样就**什么都不做**（已加载的后续页、滚动位置、选中态全留着）；
    *   不一样才换掉（退回第一页 —— 与手动点「刷新」同一条路径）。
    *   只比第一页是刻意的取舍：要覆盖已加载的 N 页就得再拉 N 页（用户点过十几次
    *   「加载更多」时这个代价不小），而「第一页与总数都没变、后面却变了」极罕见。
+   * @returns 这一页**真正新增**的歌（去重之后）；`null` = 这一次没取成（错误已写进 `error`）。
+   *   loadAll 靠它知道自己推到了哪儿，也靠它判断「一页一首新的都没有 = 别再原地打转」。
    */
   const load = useCallback(
-    async (offset: number, generationToken: number, silent = false) => {
+    async (offset: number, generationToken: number, silent = false): Promise<Song[] | null> => {
       try {
         const result = await getSongs(requireClient(), { ...query, limit: pageSize, offset })
-        if (generationToken !== generation.current) return
+        if (generationToken !== generation.current) return null
         // 取回来了就先清掉可能残留的错误提示：数据是好的，那条红字不该继续挂着
         setError(null)
 
@@ -90,23 +112,26 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
           const unchanged =
             totalRef.current === result.total &&
             sameData(songsRef.current.slice(0, pageSize), result.songs)
-          if (unchanged) return
+          if (unchanged) return []
           commit(result.songs, result.total, 1)
-        } else {
-          const previous = songsRef.current
-          if (offset === 0) {
-            commit(result.songs, result.total, 1)
-          } else {
-            const seen = new Set(previous.map((s) => s.id))
-            const merged = [...previous, ...result.songs.filter((s) => !seen.has(s.id))]
-            commit(merged, result.total, Math.floor(offset / pageSize) + 1)
-          }
+          return []
         }
+
+        const previous = songsRef.current
+        if (offset === 0) {
+          commit(result.songs, result.total, 1)
+          return result.songs
+        }
+        const seen = new Set(previous.map((s) => s.id))
+        const added = result.songs.filter((s) => !seen.has(s.id))
+        commit([...previous, ...added], result.total, Math.floor(offset / pageSize) + 1)
+        return added
       } catch (err) {
-        if (generationToken !== generation.current) return
+        if (generationToken !== generation.current) return null
         // 静默刷新失败不冒泡：手头这份还能用，别为一次后台动作在页面上弹红字
-        if (silent) return
+        if (silent) return null
         setError(err instanceof Error ? err.message : '加载失败')
+        return null
       }
     },
     // query 通过 queryKey 参与依赖；直接放 query 对象会因每次渲染新引用而无限重跑
@@ -122,6 +147,12 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
     const silent = key === lastKey.current
     lastKey.current = key
     const token = ++generation.current
+    /*
+     * 上一轮的分页请求从这一刻起作废（generation 换了），它回来时不会再走「取完了」那条路，
+     * 也就不会自己把 loadingMore 收掉。这里显式收一次 —— 否则表尾会一直挂着「正在加载更多
+     * 歌曲…」，而 loadMore 的闸（loadingMore）也跟着永远关着，列表就再也翻不动了。
+     */
+    setLoadingMore(false)
 
     if (silent) {
       void load(0, token, true)
@@ -140,7 +171,8 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
   }, [active, queryKey, pageSize, revision, load])
 
   const loadMore = useCallback(() => {
-    if (loading || loadingMore) return
+    // 后台正在一次拉完时不另起一页：它本来就会把余下的都接上（见 restRun）
+    if (loading || loadingMore || restRun.current) return
     setLoadingMore(true)
     const token = generation.current
     void load(songs.length, token).finally(() => {
@@ -148,9 +180,59 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
     })
   }, [load, loading, loadingMore, songs.length])
 
+  /**
+   * 后台把余下的分页一次拉完（见接口上的说明）。
+   *
+   * ★ 与滚动触发的那条走同一个 `load`：并进列表、去重、错误处理只有一份实现。
+   *   区别只是这里由一个 while 循环推着走，而那边每滚到底一次推一页。
+   * ★ 收手有三种：筛选条件变了（generation 变了，在途的结果一律作废）、这一页没取成、
+   *   或者这一页**一首新的都没有**（后端在翻页期间增删过，再按同一个 offset 要只会原地打转）。
+   * ★ 已经有一轮在拉（用户连点了两次「播放全部」）：不另起一轮 —— 等它拉完，再把
+   *   **从这一刻起新到的那一段**交给这一轮回调。各自只关心自己没见过的歌，上一轮回调
+   *   属于旧队列，不该再往新的里面塞。若那一轮属于已经作废的一代（中途换过筛选 / 刷新过），
+   *   等它没有意义：直接按新的一份重新起一轮。
+   */
+  const loadAll = useCallback(
+    async (onPage?: (songs: Song[]) => void) => {
+      const token = generation.current
+      const running = restRun.current
+      if (running && running.token === token) {
+        const from = songsRef.current.length
+        await running.done
+        // 等待期间条件又变了：这一份列表已经不算数，就别再往队列里补
+        if (token !== generation.current) return
+        const tail = songsRef.current.slice(from)
+        if (tail.length > 0) onPage?.(tail)
+        return
+      }
+
+      const run = (async () => {
+        while (token === generation.current && songsRef.current.length < totalRef.current) {
+          setLoadingMore(true)
+          const added = await load(songsRef.current.length, token)
+          if (token !== generation.current) return
+          if (!added || added.length === 0) return
+          onPage?.(added)
+        }
+      })()
+      const entry = { token, done: run }
+      restRun.current = entry
+      try {
+        await run
+      } finally {
+        // 只在「还是我这一轮」时才清：中途被新的一代顶掉时，那一位属于它
+        if (restRun.current === entry) restRun.current = null
+        if (token === generation.current) setLoadingMore(false)
+      }
+    },
+    [load]
+  )
+
   const refresh = useCallback(() => {
     const token = ++generation.current
     setLoading(true)
+    // 同 effect 里那条：在途的分页作废之后，它那句「正在加载更多」不该留在屏幕上
+    setLoadingMore(false)
     commit([], 0, 0)
     void load(0, token).finally(() => {
       if (token === generation.current) setLoading(false)
@@ -188,6 +270,7 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
     patchSong,
     removeSongs,
     fetchAllIds,
+    loadAll,
     pages
   }
 }

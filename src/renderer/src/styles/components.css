@@ -4193,6 +4193,28 @@ html[data-mini='true'] .toasts {
   padding: 22px 0 8px;
 }
 
+/*
+ * 表尾「正在加载更多歌曲…」（无限滚动 / 「播放全部」后台补列表，见 components/SongTable）。
+ *
+ * ★ 它与 .load-more 那一块（底部的「全选当前筛选」）不是一回事：那一块是常驻的动作，
+ *   这一行只在**正在取下一页**时出现。所以它要紧贴最后一行、矮一些 —— 看起来像「表格
+ *   还在长」，而不是表格下面又开了一块区域。
+ * ★ 转圈用现成的 .spin（见上面那组工具类），颜色跟着文字走（--text-4），不抢戏。
+ */
+.list-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 16px 0 10px;
+  font-size: 12.5px;
+  color: var(--text-4);
+}
+
+.list-loading svg {
+  flex: none;
+}
+
 .divider {
   height: 1px;
   background: var(--line-1);

@@ -1,16 +1,22 @@
 /**
- * 曲库页 = 三种内容（服务器的曲库 / 服务器的文件夹 / 本机磁盘上的文件）共用一个外壳。
+ * 曲库页 = 四种内容（服务器的曲库 / 服务器的文件夹 / 电台 / 本机磁盘上的文件）共用一个外壳。
  *
  * ★ 侧栏只有一个「曲库」入口：后端的曲库与**本机磁盘上的音频文件**是两份来源不同的东西
  *   （后者读磁盘、不需要登录，见 §8.16），所以页头那颗切换按**来源**分 ——
- *   「服务器」= 后端曲库（按标签 / 按文件夹两种看法），「本地」= 本机那批文件。
- *   合并的是入口，不是把两份数据混在一起：换到「本地」时一个后端请求也不发。
+ *   「服务器」= 后端曲库（按标签 / 按文件夹两种看法），「电台」= 后端曲库里那批电台，
+ *   「本地」= 本机那批文件。合并的是入口，不是把几份数据混在一起：换到「本地」时一个
+ *   后端请求也不发。
  *
- * ★ 底下仍然是**三条路由**（library / folders / local），而不是一个组件内的 state：
+ * ★ 电台本来是「服务器」里那颗类型筛选（全部 / 服务器 / 网络 / 电台）的一档，现在提到
+ *   第一层单列一格。理由有两条：它自成一份内容（只有这一档才有「添加电台」这件事），
+ *   而类型筛选是同一页的第二层 —— 把一份内容藏在另一份内容的筛选里，用户得先想到
+ *   「电台是曲库的一种类型」才找得到。提上来之后类型筛选里就**不再有它**（见 TYPE_OPTIONS）。
+ *
+ * ★ 底下仍然是**四条路由**（library / folders / radio / local），而不是一个组件内的 state：
  *   文件夹要能带着当前目录深链、面包屑要能一段段跳回去，局部 state 表达不了这些
  *   （刷新窗口或后退就丢）；主进程菜单、命令面板也都是按路由打的。
  *
- * ★ 页头（标题 + 副标题 + 来源切换 + 看法切换）由三种内容**各摆一次**
+ * ★ 页头（标题 + 副标题 + 来源切换 + 看法切换）由四种内容**各摆一次**
  *   （components/LibraryHeader）：副标题里的数字只有各自的视图知道。这一页因此只剩
  *   「挑哪一块内容摆上去」这一件事。
  *
@@ -26,7 +32,7 @@
  *   3. **批量操作区分「行选中」与「全选当前筛选」**：前者能播能排队，后者只做 id 级动作。
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { FacetField, Song, SongType } from '@shared/types'
 import { FACET_LABELS } from '@shared/types'
@@ -55,39 +61,43 @@ import { FoldersView } from './FoldersView'
 import { LocalFilesView } from './LocalFilesView'
 
 /**
- * 歌曲类型（后端 `type` 参数）。
+ * 歌曲类型（后端 `type` 参数）—— 「服务器」那一半里的筛选。
  *
  * ★ 第一档的**值**仍是 `local`（后端口径：存在服务器本机磁盘上的歌），但**名字**改叫
  *   「服务器」—— 页头那颗来源切换把「本地」这个词拿走了（它现在指本机磁盘上的文件），
- *   两处都叫「本地」的话，这一行看上去像在筛下面那三种来源里的第二种。
+ *   两处都叫「本地」的话，这一行看上去像在筛下面那几种内容里的第二种。
+ * ★ **没有 `radio`**：电台已经提到页头第一层（见 LibraryPage 的说明），这里再留一份就是
+ *   同一件事的两个入口。而「全部」照旧包含电台 —— 那一档只是给它一个更近的门口。
  */
 const TYPE_OPTIONS: { value: SongType | 'all'; label: string }[] = [
   { value: 'all', label: '全部' },
   { value: 'local', label: '服务器' },
-  { value: 'remote', label: '网络' },
-  { value: 'radio', label: '电台' }
+  { value: 'remote', label: '网络' }
 ]
 
 const BROWSE_FIELDS: FacetField[] = ['artist', 'album', 'genre', 'language', 'style']
 
-/** 本页的三条路由（三个页面槽，各留一份实例：见 App 的 PAGE_SLOTS） */
-type LibraryRoute = Extract<NativeRoute, { name: 'library' | 'folders' | 'local' }>
+/** 本页的四条路由（四个页面槽，各留一份实例：见 App 的 PAGE_SLOTS） */
+type LibraryRoute = Extract<NativeRoute, { name: 'library' | 'folders' | 'local' | 'radio' }>
 
 /**
  * @param route 由页面槽传进来，**不是**自己从 useUi 里读「当前路由」：这一页在槽里常驻
- *   （library / folders / local 各一份实例），不活跃的那一份读到的「当前路由」已经属于别人了
- *   —— 拿它渲染会让留在 DOM 里的这一页跟着变脸（曲库槽里画出文件夹、反之亦然），
+ *   （library / folders / radio / local 各一份实例），不活跃的那一份读到的「当前路由」已经
+ *   属于别人了 —— 拿它渲染会让留在 DOM 里的这一页跟着变脸（曲库槽里画出文件夹、反之亦然），
  *   而它本该停在用户离开时的样子；更要紧的是「曲库」那一半的筛选条件会跟着一起丢。
  */
 export function LibraryPage({ route }: { route: LibraryRoute }): React.JSX.Element {
   return (
     <div className="page">
-      {/* 三种内容各自成块，并且**各自把同一份页头摆在头上**（components/LibraryHeader）——
+      {/* 四种内容各自成块，并且**各自把同一份页头摆在头上**（components/LibraryHeader）——
           副标题是「这里现在有多少东西」，那个数字只有各自的视图知道，见那里的说明 */}
       {route.name === 'local' ? (
         <LocalFilesView />
       ) : route.name === 'folders' ? (
         <FoldersView path={route.path} />
+      ) : route.name === 'radio' ? (
+        // 电台 = 同一个曲库视图，只是类型被钉死（没有那颗类型筛选，见 TYPE_OPTIONS）
+        <LibraryView fixedType="radio" />
       ) : (
         <LibraryView />
       )}
@@ -95,12 +105,19 @@ export function LibraryPage({ route }: { route: LibraryRoute }): React.JSX.Eleme
   )
 }
 
-/** 「曲库」模式：类型筛选 + 分面浏览 + 歌曲表 */
-function LibraryView(): React.JSX.Element {
+/**
+ * 曲库模式：类型筛选 + 分面浏览 + 歌曲表。
+ *
+ * @param fixedType 类型被钉死在某一档（电台那一份内容用它）。此时那颗类型筛选不摆出来 ——
+ *   它只有一种可选，摆出来只是一个永远按着的钮；而「当前筛选」那一行也不挂类型 chip。
+ *   其余（刷新 / 播放全部 / 分面浏览 / 排序 / 多选）与普通曲库完全一样。
+ */
+function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element {
   const navigate = useUi((s) => s.navigate)
   const playSongs = usePlayer((s) => s.playSongs)
+  const addToQueue = usePlayer((s) => s.addToQueue)
 
-  const [type, setType] = useState<SongType | 'all'>('all')
+  const [type, setType] = useState<SongType | 'all'>(fixedType ?? 'all')
   const [showHidden, setShowHidden] = useState(false)
   const [filters, setFilters] = useState<Partial<Record<FacetField, string>>>({})
   const [browseField, setBrowseField] = useState<FacetField>('artist')
@@ -127,9 +144,16 @@ function LibraryView(): React.JSX.Element {
   )
 
   const list = useSongList(query, 200)
+  /*
+   * 分面浏览只给「服务器」那一半：`/songs/facets` 没有按类型过滤的口径（它算的是整份曲库），
+   * 在电台那一页点一个歌手卡只会筛出 0 首。所以那一页连请求都不发，那颗钮也不摆。
+   */
   const facets = useAsync(
-    () => getFacets(requireClient(), browseField, { limit: 60, sort: 'count', order: 'desc' }),
-    [browseField]
+    () =>
+      fixedType
+        ? Promise.resolve({ facets: [], total: 0 })
+        : getFacets(requireClient(), browseField, { limit: 60, sort: 'count', order: 'desc' }),
+    [browseField, fixedType]
   )
 
   const activeFilters = Object.entries(filters).filter(([, v]) => Boolean(v)) as [
@@ -167,6 +191,43 @@ function LibraryView(): React.JSX.Element {
     ? selectAllIds
     : selection.map((i) => list.songs[i]?.id).filter((x): x is number => x != null)
 
+  /**
+   * 播放来源：行内双击与「播放全部」报的是同一份。
+   * 电台是一整份内容，键就写 `radio`；曲库按筛选条件区分（同一份筛选下播起来的算一趟）。
+   */
+  const playContext = useMemo(
+    () => ({ type: 'library', key: fixedType ?? JSON.stringify(filters) }),
+    [fixedType, filters]
+  )
+
+  /**
+   * 「播放全部」这一次后台补队列的世代号（见下面 playAll）。
+   *
+   * 用户再点一次「播放全部」时，上一轮还在飞的分页就不许再往队列里塞 —— 那会让队列里
+   * 混进上一轮的歌。（换了筛选条件则由 loadAll 自己的 generation 收手，列表与分页一起作废。）
+   */
+  const playAllSession = useRef(0)
+
+  /**
+   * 播放全部：**先用手上的这一页起播**，余下的分页由 loadAll 在后台继续拉，
+   * 每拉到一页就接到队列尾巴上（见 hooks/useSongList 的 loadAll）。
+   *
+   * ★ 不 await 那一趟：等整份列表就位再起播，几千首的曲库要等十几秒 —— 而用户按的是
+   *   「播放」，不是「加载完再播放」。列表本身也会跟着一页页补全（表尾那条加载提示说的
+   *   就是这件事，见 components/SongTable）。
+   * ★ 追加走 addToQueue 而不是再调一次 playSongs：后者会重建队列与游标，正在放的那一首
+   *   会被打断。追加只往后接，播到队尾自然接上新到的那些。
+   */
+  const playAll = useCallback(() => {
+    if (list.songs.length === 0) return
+    const session = ++playAllSession.current
+    void playSongs(list.songs, 0, playContext)
+    void list.loadAll((added) => {
+      if (session !== playAllSession.current) return
+      addToQueue(added)
+    })
+  }, [list, playSongs, addToQueue, playContext])
+
   /** 报给页头那行副标题（跟着标题走，见 components/LibraryHeader） */
   const subtitle =
     list.loading && list.songs.length === 0
@@ -176,9 +237,9 @@ function LibraryView(): React.JSX.Element {
   return (
     <>
       {/* 这一页的动作钮作为页头的 children：与来源切换同一行（见 LibraryHeader） */}
-      <LibraryHeader pane="library" subtitle={subtitle}>
-        {/* 只有「电台」这一档才有「添加」这件事：它是曲库里唯一靠链接录进来的类型 */}
-        {type === 'radio' ? (
+      <LibraryHeader pane={fixedType === 'radio' ? 'radio' : 'library'} subtitle={subtitle}>
+        {/* 只有「电台」那一份内容才有「添加」这件事：它是曲库里唯一靠链接录进来的类型 */}
+        {fixedType === 'radio' ? (
           <button type="button" className="btn" onClick={() => setAddingRadio(true)}>
             <IconPlus size={15} />
             添加电台
@@ -193,7 +254,7 @@ function LibraryView(): React.JSX.Element {
           className="btn"
           data-variant="primary"
           disabled={list.songs.length === 0}
-          onClick={() => void playSongs(list.songs, 0, { type: 'library', key: 'all' })}
+          onClick={playAll}
         >
           <IconPlay size={15} />
           播放全部
@@ -201,36 +262,50 @@ function LibraryView(): React.JSX.Element {
       </LibraryHeader>
 
       {/* ── 筛选区 ── */}
-      <div className="row-between" style={{ gap: 14, flexWrap: 'wrap', marginBottom: 14 }}>
-        <div className="segmented" role="group" aria-label="歌曲类型">
-          {TYPE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              aria-pressed={type === option.value}
-              onClick={() => {
-                setType(option.value)
-                clearSelection()
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+      <div
+        className="row-between"
+        style={{
+          gap: 14,
+          flexWrap: 'wrap',
+          marginBottom: 14,
+          // 电台那一半没有类型筛选，这一行只剩右端那几颗开关与排序 —— 让它们靠右（与曲库同一处收尾）
+          justifyContent: fixedType ? 'flex-end' : undefined
+        }}
+      >
+        {/* 类型筛选只属于「服务器」那一半：电台那一份内容只有一种类型（见 fixedType） */}
+        {fixedType ? null : (
+          <div className="segmented" role="group" aria-label="歌曲类型">
+            {TYPE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={type === option.value}
+                onClick={() => {
+                  setType(option.value)
+                  clearSelection()
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="row" style={{ gap: 8 }}>
-          {/* 分类浏览：一颗开关钮（打开后表头上面多一块分面网格） */}
-          <button
-            type="button"
-            className="icon-btn"
-            data-active={browsing}
-            aria-pressed={browsing}
-            aria-label="分类浏览"
-            data-tip="按歌手 / 专辑 / 流派 / 语种 / 风格分类浏览"
-            onClick={() => setBrowsing((v) => !v)}
-          >
-            <IconSparkle size={16} />
-          </button>
+          {/* 分类浏览：一颗开关钮（打开后表头上面多一块分面网格）。电台那一页没有它（见 facets） */}
+          {fixedType ? null : (
+            <button
+              type="button"
+              className="icon-btn"
+              data-active={browsing}
+              aria-pressed={browsing}
+              aria-label="分类浏览"
+              data-tip="按歌手 / 专辑 / 流派 / 语种 / 风格分类浏览"
+              onClick={() => setBrowsing((v) => !v)}
+            >
+              <IconSparkle size={16} />
+            </button>
+          )}
           {/* 「显示隐藏歌单曲目」：开着时把隐藏歌单里的歌也一起列出来。
               ★ 图标是「带斜线的眼睛」（与「隐藏歌单」那几个入口同一个图形），这颗钮管的正是
                 「隐藏」这件事，按下泛强调色 = 现在把隐藏的也算进来。没有可见文字，含义全靠
@@ -270,10 +345,11 @@ function LibraryView(): React.JSX.Element {
         </div>
       </div>
 
-      {activeFilters.length > 0 || showHidden || type !== 'all' ? (
+      {activeFilters.length > 0 || showHidden || (type !== 'all' && !fixedType) ? (
         <div className="chip-row" style={{ marginBottom: 14 }}>
           <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>当前筛选</span>
-          {type !== 'all' ? (
+          {/* 类型 chip 只属于「服务器」那一半：电台的类型是**这一页本身**定的，不是一个可解除的筛选 */}
+          {type !== 'all' && !fixedType ? (
             <button
               type="button"
               className="chip"
@@ -313,7 +389,8 @@ function LibraryView(): React.JSX.Element {
             onClick={() => {
               setFilters({})
               setShowHidden(false)
-              setType('all')
+              // 电台那一半的类型是这一页本身定的，不是一条能清掉的筛选
+              setType(fixedType ?? 'all')
             }}
           >
             清空全部
@@ -395,10 +472,9 @@ function LibraryView(): React.JSX.Element {
         loading={list.loading}
         sort={sort}
         onSortChange={setSort}
-        onPlayAt={(index) =>
-          void playSongs(list.songs, index, { type: 'library', key: JSON.stringify(filters) })
-        }
+        onPlayAt={(index) => void playSongs(list.songs, index, playContext)}
         hasMore={list.hasMore}
+        loadingMore={list.loadingMore}
         onLoadMore={list.loadMore}
         selection={selection}
         onSelectionChange={(indexes) => {
@@ -406,18 +482,34 @@ function LibraryView(): React.JSX.Element {
           setSelectAllIds(null)
         }}
         menuOptions={{ onDeleted: (ids) => list.removeSongs(ids) }}
-        emptyTitle="没有匹配的歌曲"
-        emptyDescription="换个筛选条件，或去「设置 → 曲库」扫描音乐目录"
+        emptyTitle={fixedType === 'radio' ? '还没有电台' : '没有匹配的歌曲'}
+        emptyDescription={
+          fixedType === 'radio'
+            ? '点页头的「添加电台」，把直播或视频电台的地址加进来'
+            : '换个筛选条件，或去「设置 → 曲库」扫描音乐目录'
+        }
         emptyAction={
-          <button
-            type="button"
-            className="btn"
-            data-variant="primary"
-            onClick={() => navigate({ name: 'settings', section: 'library' })}
-          >
-            <IconUpload size={15} />
-            去扫描曲库
-          </button>
+          fixedType === 'radio' ? (
+            <button
+              type="button"
+              className="btn"
+              data-variant="primary"
+              onClick={() => setAddingRadio(true)}
+            >
+              <IconPlus size={15} />
+              添加电台
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn"
+              data-variant="primary"
+              onClick={() => navigate({ name: 'settings', section: 'library' })}
+            >
+              <IconUpload size={15} />
+              去扫描曲库
+            </button>
+          )
         }
       />
 

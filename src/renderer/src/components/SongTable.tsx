@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Song, SongSortField } from '@shared/types'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
 import { openMenuFromEvent, type MenuItem } from './ContextMenu'
-import { IconGrip, IconHeart, IconMore, IconPause, IconPlay } from './Icons'
+import { IconGrip, IconHeart, IconLoader, IconMore, IconPause, IconPlay } from './Icons'
 import { Cover, EmptyState, InfiniteSentinel, SongRowsSkeleton } from './primitives'
 import { buildSongMenuItems, type SongMenuOptions } from './songMenu'
 import { usePageActive } from '@/hooks/usePageActive'
@@ -88,6 +88,13 @@ export interface SongTableProps {
   /** 还有更多可加载时渲染无限滚动哨兵 */
   onLoadMore?: () => void
   hasMore?: boolean
+  /**
+   * 正在加载下一批（无限滚动／「播放全部」后台补列表都算）。
+   *
+   * 表尾会摆一行「正在加载更多歌曲…」：滚到底之后什么都不画的观感是「列表就这么多」，
+   * 而实际上下一次分页正在路上 —— 那一行就是这两件事的区别。
+   */
+  loadingMore?: boolean
   sort?: SongSort | null
   onSortChange?: (sort: SongSort | null) => void
   /** 受控多选（下标） */
@@ -113,6 +120,7 @@ export function SongTable({
   loading,
   onLoadMore,
   hasMore,
+  loadingMore,
   sort,
   onSortChange,
   selection = [],
@@ -343,8 +351,21 @@ export function SongTable({
         </div>
       ) : null}
 
+      {/*
+        表尾那一行「正在加载更多歌曲…」：无限滚动的反馈只有这一处（滚到底之后表格下方是
+        空的，什么都不画就与「已经到底了」长得一模一样）。
+        ★ 哨兵在加载期间 disabled：否则它会拿同一个 offset 再要一次（loadMore 自己也有闸，
+          但那是一层兜底，不该让它靠「多半能挡住」来工作）。
+      */}
+      {loadingMore && hasMore ? (
+        <div className="list-loading" role="status" aria-live="polite">
+          <IconLoader size={14} className="spin" />
+          <span>正在加载更多歌曲…</span>
+        </div>
+      ) : null}
+
       {hasMore && onLoadMore ? (
-        <InfiniteSentinel onVisible={onLoadMore} disabled={!hasMore} />
+        <InfiniteSentinel onVisible={onLoadMore} disabled={!hasMore || loadingMore} />
       ) : null}
     </div>
   )
