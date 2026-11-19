@@ -252,6 +252,8 @@ export function SearchPage({ keyword }: { keyword: string }): React.JSX.Element 
         onSortChange={setSort}
         onPlayAt={(index) => void playSongs(list.songs, index, { type: 'search', key: keyword })}
         hasMore={list.hasMore}
+        loadingMore={list.loadingMore}
+        total={list.total}
         onLoadMore={list.loadMore}
         selection={selection}
         onSelectionChange={(indexes) => {
@@ -264,26 +266,7 @@ export function SearchPage({ keyword }: { keyword: string }): React.JSX.Element 
         emptyAction={<EmptyStateInline />}
       />
 
-      {/* 操作条不出现时（选中 0~1 首）「全选筛选」一直在这儿，别让这一档成了死角 */}
-      {list.songs.length > 0 && selection.length < 2 && !selectAllIds ? (
-        <div className="load-more">
-          <button
-            type="button"
-            className="btn"
-            data-size="sm"
-            data-variant="ghost"
-            onClick={() => {
-              void list
-                .fetchAllIds()
-                .then(setSelectAllIds)
-                .catch(() => undefined)
-            }}
-          >
-            全选当前筛选（{list.total} 首）
-          </button>
-        </div>
-      ) : null}
-
+      {/* 表尾那颗「全选当前筛选（N 首）」已并入 Ctrl/⌘+A（见 hooks/useSelectAllShortcut） */}
       {shouldShowSelectionBar(selectAllIds?.length ?? selection.length) ? (
         <SelectionBar
           ids={

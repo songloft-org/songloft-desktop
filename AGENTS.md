@@ -175,7 +175,9 @@ src/
    │                  同一份实现（components/LibraryHeader）：副标题与动作钮（刷新 / 播放全部…）
    │                  都只有各自的视图才知道，所以由它们各自把这份页头摆上 —— 标题 + 副标题在第一行，
    │                  动作钮在第二行右端、与来源切换同一行）
-   ├─ components/    Sidebar / TitleBar / SongTable / PlayerBar / LyricsView / CommandPalette /
+   ├─ components/    Sidebar / TitleBar / SongTable（表尾三态互斥：正在加载更多 / 「加载更多」
+   │                 手动入口 / 已经到底 —— 只在传了 onLoadMore 的分页列表里出现）/
+   │                 PlayerBar / LyricsView / CommandPalette /
    │                 Panel / ContextMenu / Modal / Toasts /
    │                 SelectionBar（多选操作条：手上有歌就先播 / 先入队，全选模式下余下的
    │                 由 loadSongs 在后台补齐后接在队尾 —— 播放不等整份列表就位）/

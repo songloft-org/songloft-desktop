@@ -512,6 +512,7 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
         onPlayAt={(index) => void playSongs(list.songs, index, playContext)}
         hasMore={list.hasMore}
         loadingMore={list.loadingMore}
+        total={list.total}
         onLoadMore={list.loadMore}
         selection={selection}
         onSelectionChange={(indexes) => {
@@ -550,21 +551,11 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
         }
       />
 
-      {/* 操作条不出现时（选中 0~1 首）「全选筛选」一直在这儿，别让这一档成了死角 */}
-      {list.songs.length > 0 && selection.length < 2 && !selectAllIds ? (
-        <div className="load-more">
-          <button
-            type="button"
-            className="btn"
-            data-size="sm"
-            data-variant="ghost"
-            onClick={() => void handleSelectAll()}
-          >
-            全选当前筛选（{list.total} 首）
-          </button>
-        </div>
-      ) : null}
-
+      {/*
+        ★ 表尾那颗「全选当前筛选（N 首）」已经拿掉了（见 components/SongTable 的表尾三态）：
+        全选改由 `Ctrl/⌘+A` 承担（见 hooks/useSelectAllShortcut），列表底部只交代「还有没有
+        更多」，不再摆一颗与当前进度无关的按钮。
+      */}
       {shouldShowSelectionBar(selectAllIds?.length ?? selection.length) ? (
         <SelectionBar
           ids={totalForBar}

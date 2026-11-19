@@ -592,6 +592,15 @@ window.__t = {
      */
     selectionBars: vis('.selection-bar').length,
     selectionText: vis('.selection-bar').map((e) => (e.textContent || '').trim()).join(' '),
+    /**
+     * 列表底部那一条**三态**（见 components/SongTable）：加载中 / 加载更多 / 已经到底。
+     * 三者互斥，所以这里把三种容器的文字收集起来 —— 数出来几条、写的是什么，
+     * 就是「现在是哪一态」的全部判据。
+     * ★ .load-more 在「最近播放」那页是另一颗钮（再显示 N 条），但 vis() 只认看得见的那一页。
+     */
+    listFooters: vis('.list-loading, .load-more, .list-end').map((e) =>
+      (e.textContent || '').trim()
+    ),
     /** 命令面板的分组标题（歌曲 / 歌单 / 命令）—— 只数条目个数看不出分组有没有接上 */
     paletteGroups: vis('.palette-group').map((e) => (e.textContent || '').trim()),
     /** 空态文案（搜索无结果、「没有匹配的扩展」…） */
@@ -854,7 +863,16 @@ const STEPS = [
   ['01-home', "window.__t.click('.nav-item', '首页')", 1500],
 
   // ── 曲库：类型筛选 → 分面浏览 → 组合筛选 ──────────────────────────────
-  ['02-library', "window.__t.click('.nav-item', '曲库')", 2200, { rows: exactly(43) }],
+  /*
+   * 表尾只交代「还有没有更多」（见 components/SongTable 的三态）。mock 的 43 首一页取完，
+   * 所以这里必须是**已经到底**那一态，而且只此一条 —— 三态互斥，多出一条就是又叠了一层。
+   */
+  [
+    '02-library',
+    "window.__t.click('.nav-item', '曲库')",
+    2200,
+    { rows: exactly(43), listFooters: equals('已经到底了 · 共 43 首') }
+  ],
   /*
    * `Ctrl+A` 全选（见 hooks/useSelectAllShortcut）。mock 的 43 首一页就取完了，所以走的是
    * 「整份都在手 → 直接选行」那条路：操作条上写的是「已选 43 首」，而不是 id 级的

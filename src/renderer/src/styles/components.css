@@ -4229,11 +4229,10 @@ html[data-mini='true'] .toasts {
 }
 
 /*
- * 表尾「正在加载更多歌曲…」（无限滚动 / 「播放全部」后台补列表，见 components/SongTable）。
+ * 表尾三态之一：「正在加载更多歌曲…」（无限滚动 / 「播放全部」后台补列表，见 components/SongTable）。
  *
- * ★ 它与 .load-more 那一块（底部的「全选当前筛选」）不是一回事：那一块是常驻的动作，
- *   这一行只在**正在取下一页**时出现。所以它要紧贴最后一行、矮一些 —— 看起来像「表格
- *   还在长」，而不是表格下面又开了一块区域。
+ * ★ 三态互斥、同一个位置：这一行（加载中）/ 一行「加载更多」按钮（还有更多）/
+ *   .list-end（已经到底）。所以三者的字号、颜色、上下留白要一致 —— 换状态时该只有文字变。
  * ★ 转圈用现成的 .spin（见上面那组工具类），颜色跟着文字走（--text-4），不抢戏。
  */
 .list-loading {
@@ -4248,6 +4247,23 @@ html[data-mini='true'] .toasts {
 
 .list-loading svg {
   flex: none;
+}
+
+/*
+ * 表尾「已经到底了 · 共 N 首」（见 components/SongTable）。
+ *
+ * 与上面那条加载提示同一处落脚、同一套字号与颜色 —— 两者是同一行位置的两种状态，
+ * 换过去时只是文字变了，不该连位置一起跳。
+ * ★ 不给它加分隔线或大留白：它是**列表的句号**，不是又一块内容区。
+ */
+.list-end {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 16px 0 10px;
+  font-size: 12.5px;
+  color: var(--text-4);
 }
 
 .divider {

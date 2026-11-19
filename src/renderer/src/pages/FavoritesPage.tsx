@@ -127,6 +127,8 @@ export function FavoritesPage(): React.JSX.Element {
           void playSongs(list.songs, index, { type: 'playlist', key: String(FAVORITE_PLAYLIST_ID) })
         }
         hasMore={list.hasMore}
+        loadingMore={list.loadingMore}
+        total={list.total}
         onLoadMore={list.loadMore}
         selection={selection}
         onSelectionChange={(indexes) => {
@@ -146,21 +148,7 @@ export function FavoritesPage(): React.JSX.Element {
         }
       />
 
-      {/* 操作条不出现时（选中 0~1 首）「全选」一直在这儿，别让这一档成了死角 */}
-      {list.songs.length > 0 && selection.length < 2 && !selectAllIds ? (
-        <div className="load-more">
-          <button
-            type="button"
-            className="btn"
-            data-size="sm"
-            data-variant="ghost"
-            onClick={() => void handleSelectAll()}
-          >
-            全选（{list.total} 首）
-          </button>
-        </div>
-      ) : null}
-
+      {/* 表尾那颗「全选（N 首）」已并入 Ctrl/⌘+A（见 hooks/useSelectAllShortcut） */}
       {shouldShowSelectionBar(selectAllIds?.length ?? selection.length) ? (
         <SelectionBar
           ids={

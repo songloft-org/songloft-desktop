@@ -92,10 +92,15 @@ export interface SongTableProps {
   /**
    * 正在加载下一批（无限滚动／「播放全部」后台补列表都算）。
    *
-   * 表尾会摆一行「正在加载更多歌曲…」：滚到底之后什么都不画的观感是「列表就这么多」，
-   * 而实际上下一次分页正在路上 —— 那一行就是这两件事的区别。
+   * 表尾三态互斥：加载中 / 已到底 / 「加载更多」入口（见文件末尾那段说明）—— 滚到底之后
+   * 什么都不画的观感是「列表就这么多」，而实际上下一次分页正在路上。
    */
   loadingMore?: boolean
+  /**
+   * 这一份筛选的总首数：表尾「已经到底了 · 共 N 首」认它。
+   * 不传就用 `songs.length`（列表为「全都在手」那一类时两者相等）。
+   */
+  total?: number
   sort?: SongSort | null
   onSortChange?: (sort: SongSort | null) => void
   /** 受控多选（下标） */
@@ -120,6 +125,7 @@ export function SongTable({
   onLoadMore,
   hasMore,
   loadingMore,
+  total,
   sort,
   onSortChange,
   selection = [],
@@ -369,16 +375,44 @@ export function SongTable({
       {bottomPad > 0 ? <div style={{ height: bottomPad }} aria-hidden="true" /> : null}
 
       {/*
-        表尾那一行「正在加载更多歌曲…」：无限滚动的反馈只有这一处（滚到底之后表格下方是
-        空的，什么都不画就与「已经到底了」长得一模一样）。
+        表尾三态，**互斥**、跟着加载状态实时换（见下面那段说明）：
+          · 加载中   → 转圈 + 「正在加载更多歌曲…」
+          · 还有更多 → 「加载更多」按钮（手动入口：自动加载没触发、或者上一次失败了）
+          · 已经到底 → 「已经到底了 · 共 N 首」
+
+        ★ 只有支持分页的列表（传了 onLoadMore）才有这一块：目录浏览那种一次取完的列表
+          没有「更多」可言，在它底下写一句「已经到底了」纯属噪音。
         ★ 哨兵在加载期间 disabled：否则它会拿同一个 offset 再要一次（loadMore 自己也有闸，
           但那是一层兜底，不该让它靠「多半能挡住」来工作）。
       */}
-      {loadingMore && hasMore ? (
-        <div className="list-loading" role="status" aria-live="polite">
-          <IconLoader size={14} className="spin" />
-          <span>正在加载更多歌曲…</span>
-        </div>
+      {onLoadMore ? (
+        loadingMore ? (
+          <div className="list-loading" role="status" aria-live="polite">
+            <IconLoader size={14} className="spin" />
+            <span>正在加载更多歌曲…</span>
+          </div>
+        ) : hasMore ? (
+          /*
+           * 正常情况下这张钮几乎看不见 —— 滚到离底 400px 时哨兵就已经把下一页要上了，
+           * 它只在「自动那一下没成」（加载失败、或者哨兵还没触发）时才轮到。
+           * 所以文案是「加载更多」而不是「重试」：同一个钮，失败时点它就是重试。
+           */
+          <div className="load-more">
+            <button
+              type="button"
+              className="btn"
+              data-size="sm"
+              data-variant="ghost"
+              onClick={onLoadMore}
+            >
+              加载更多
+            </button>
+          </div>
+        ) : (
+          <div className="list-end" role="status">
+            已经到底了 · 共 {total ?? songs.length} 首
+          </div>
+        )
       ) : null}
 
       {hasMore && onLoadMore ? (
