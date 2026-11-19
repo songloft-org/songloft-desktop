@@ -175,6 +175,7 @@ src/
    │                  动作钮在第二行右端、与来源切换同一行）
    ├─ components/    Sidebar / TitleBar / SongTable / PlayerBar / LyricsView / CommandPalette /
    │                 Panel / ContextMenu / Modal / Toasts / SelectionBar /
+   │                 PendingUpdateModal（上次下载好的安装包，启动时问一句要不要装，见 §8.21）/
    │                 Overlay（弹层骨架：定位层 + 遮罩，Modal 与命令面板共用，见 §8.22）/
    │                 FullPlayer（满窗播放：盖在原生面上的浮层）/
   │                 VideoStage（视频画面：把播放核心那颗媒体元素挪进来 + 歌词字幕，见 §8.24）/
