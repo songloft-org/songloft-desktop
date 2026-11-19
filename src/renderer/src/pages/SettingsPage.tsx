@@ -3179,7 +3179,7 @@ function UpdateCard(): React.JSX.Element {
 
       <Row
         title="客户端更新"
-        desc="桌面端从 GitHub Releases 分发：可以把安装包下到本机、交给系统安装程序，应用不会自己替换自身的二进制"
+        desc="桌面端从 GitHub Releases 分发：下载后下次启动会提示你打开安装程序，应用不会自己替换自身的二进制"
       >
         <button type="button" className="btn" onClick={() => setClientOpen(true)}>
           <IconRefresh size={15} />
@@ -3363,7 +3363,7 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
         <>
           <div className="probe-result" data-state="ok" style={{ marginTop: 10 }}>
             <IconCheck size={15} />
-            <span>安装包已保存到 {file.path}</span>
+            <span>安装包已保存到 {file.path}，下次启动会提示安装</span>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <button
@@ -3384,8 +3384,9 @@ function ClientUpdateModal({ onClose }: { onClose: () => void }): React.JSX.Elem
       ) : null}
 
       <p className="field-hint" style={{ marginTop: 10 }}>
-        这里只把安装包下到「下载」目录，安装交给系统安装程序 —— 应用不去替换自身的二进制：
-        换到一半失败会留下一个跑不起来的客户端，而且没有回滚。
+        这里只把安装包下到「下载」目录；下次启动会再提示你打开系统安装程序 —— 应用不去替换
+        自身的二进制：换到一半失败会留下一个跑不起来的客户端，而且没有回滚。在安装器里取消
+        不会影响当前版本。
       </p>
     </Modal>
   )

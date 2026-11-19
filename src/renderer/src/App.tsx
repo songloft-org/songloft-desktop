@@ -37,6 +37,7 @@ import { ExtensionFrame } from './components/ExtensionFrame'
 import { FullPlayer } from './components/FullPlayer'
 import { IconClose, IconLoader, IconSearch } from './components/Icons'
 import { Panel } from './components/Panel'
+import { PendingUpdateModal } from './components/PendingUpdateModal'
 import { PlayerBar } from './components/PlayerBar'
 import { Sidebar } from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
@@ -54,7 +55,7 @@ import { PlaylistsPage } from './pages/PlaylistsPage'
 import { RecentPage } from './pages/RecentPage'
 import { SearchPage } from './pages/SearchPage'
 import { SettingsPage } from './pages/SettingsPage'
-import { installClientUpdateProgress } from './state/useClientUpdate'
+import { installClientUpdateProgress, useClientUpdate } from './state/useClientUpdate'
 import { installLocalFileIntake } from './state/useLocalFiles'
 import { installMediaCommands } from './state/media-commands'
 import { installMiniHost } from './state/mini-host'
@@ -242,6 +243,12 @@ export function App(): React.JSX.Element {
          * 监听（每次播放状态变化都会被叫起来，靠内部的缓存与缺口判定收敛开销，见 song-metadata）。
          */
         disposers.push(installMetadataWatch())
+        /*
+         * 上次下载好的安装包：问一次主进程「还在不在、还能不能装」。这条记录跨重启存在，
+         * 且与登录态无关 —— 放在这里是为了让免登录（只听本地文件）那一趟也提示。
+         * 主进程读的时候会顺手清掉不可用的记录（文件被删 / 已升级），所以拿到的就是能装的。
+         */
+        void useClientUpdate.getState().loadPending()
       }
 
       await useAuth.getState().bootstrap()
@@ -453,23 +460,32 @@ export function App(): React.JSX.Element {
    */
   if (screen !== 'main') {
     return (
-      <div className="shell">
-        <TitleBar solo />
-        <div className="shell-solo">
-          {screen === 'booting' ? (
-            <div className="solo-splash">
-              <IconLoader size={26} />
-              <div>正在恢复上次的会话…</div>
-            </div>
-          ) : (
-            <LoginPage />
-          )}
+      <>
+        <div className="shell">
+          <TitleBar solo />
+          <div className="shell-solo">
+            {screen === 'booting' ? (
+              <div className="solo-splash">
+                <IconLoader size={26} />
+                <div>正在恢复上次的会话…</div>
+              </div>
+            ) : (
+              <LoginPage />
+            )}
+          </div>
         </div>
-      </div>
+        {/* 待安装的更新与登录态无关：登录页 / 启动占位上也该提示 */}
+        <PendingUpdateModal />
+      </>
     )
   }
 
-  return <Shell />
+  return (
+    <>
+      <Shell />
+      <PendingUpdateModal />
+    </>
+  )
 }
 
 /* ─────────────────────────── 已登录后的外壳 ─────────────────────────── */
