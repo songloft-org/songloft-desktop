@@ -20,3 +20,6 @@ release-notes.md
 # 正常情况下跑完就删。若进程被中断（或删除动作被拦），它就会留下来污染 git status ——
 # 它们只是 electron.vite.config.ts 的产物，删掉即可，下次构建自动重建。
 electron.vite.config.*.mjs
+
+# AI 相关
+.codebuddy/
