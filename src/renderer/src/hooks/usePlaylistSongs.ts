@@ -141,6 +141,12 @@ export function usePlaylistSongs(
     const token = ++generation.current
 
     if (silent) {
+      /*
+       * ★ 与 useSongList 同一条：静默刷新也要把 loading 收掉 —— 它可能是上一代那趟首屏
+       *   请求留下的 true（那趟被这次的 generation 顶掉，finally 不再收）。卡住的 loading
+       *   会让 loadMore 永远 return（自动加载与手动按钮一起失效），而界面上看不出异常。
+       */
+      setLoading(false)
       void load(0, token, true)
       return
     }
@@ -160,7 +166,8 @@ export function usePlaylistSongs(
 
   const loadMore = useCallback(() => {
     // 后台正在一次拉完时不另起一页（见 fetchAll）
-    if (loading || loadingMore || restRun.current) return
+    // ★ `loading` 只在表还空着时才挡（首屏正在取、没有可接的位置），见 useSongList 同款说明
+    if ((loading && songsRef.current.length === 0) || loadingMore || restRun.current) return
     setLoadingMore(true)
     const token = generation.current
     void load(songs.length, token).finally(() => {

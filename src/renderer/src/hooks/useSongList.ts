@@ -167,6 +167,14 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
     setLoadingMore(false)
 
     if (silent) {
+      /*
+       * ★ 静默刷新这条也要把 `loading` 收掉：这一位可能是**上一代那趟首屏请求留下的 true**
+       *   —— 那趟被刚才这一下（generation +1）顶掉了，它的 finally 看到 token 不匹配就不收。
+       *   一个永远为 true 的 `loading` 会把 `loadMore` 的闸整个关死：自动加载与手动那颗
+       *   「加载更多」按钮都一按就 return，界面却看不出任何异常（表里有数据、就是再也翻不动）。
+       * ★ 最容易踩到的是 StrictMode 的双挂载：首挂那趟被卸载顶掉，二挂走的就是静默这条。
+       */
+      setLoading(false)
       void load(0, token, true)
       return
     }
@@ -184,7 +192,12 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
 
   const loadMore = useCallback(() => {
     // 后台正在一次拉完时不另起一页：它本来就会把余下的都接上（见 restRun）
-    if (loading || loadingMore || restRun.current) return
+    /*
+     * ★ `loading` 只在**表还空着**时才挡：那是首屏正在取、没有可接的位置。
+     *   表里已经有数据时它不该成为闸 —— 静默刷新期间也好、某一位卡住了也好，
+     *   都不该让翻页彻底失效（这一条是上面那段 `setLoading(false)` 的兜底）。
+     */
+    if ((loading && songsRef.current.length === 0) || loadingMore || restRun.current) return
     setLoadingMore(true)
     const token = generation.current
     void load(songs.length, token).finally(() => {
