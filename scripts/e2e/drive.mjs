@@ -856,6 +856,30 @@ const STEPS = [
   // ── 曲库：类型筛选 → 分面浏览 → 组合筛选 ──────────────────────────────
   ['02-library', "window.__t.click('.nav-item', '曲库')", 2200, { rows: exactly(43) }],
   /*
+   * `Ctrl+A` 全选（见 hooks/useSelectAllShortcut）。mock 的 43 首一页就取完了，所以走的是
+   * 「整份都在手 → 直接选行」那条路：操作条上写的是「已选 43 首」，而不是 id 级的
+   * 「已选中全部」—— 两者的区别正是「手上有没有完整对象」。
+   * ★ 键盘事件只能自己派发：CDP 的按键要另开一条通道，而这里验的是「这段代码接没接上」。
+   *   监听挂在 window 上，从 body 冒泡上去就行；target 是 body，不会被当成输入框。
+   * ★ 必须立刻取消选择：这 43 行选中会一路带到后面的步骤里。
+   */
+  [
+    '02b-library-select-all-key',
+    "(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true })); return 'OK' })()",
+    1200,
+    {
+      selectedRows: exactly(43),
+      selectionBars: exactly(1),
+      selectionText: containsAll('已选 43 首', '播放', '加入队列')
+    }
+  ],
+  [
+    '02c-library-select-all-clear',
+    "window.__t.click('.selection-bar button', '取消选择')",
+    900,
+    { selectionBars: exactly(0), selectedRows: exactly(0) }
+  ],
+  /*
    * ★ 类型筛选这几步的选择器**必须带上 `[aria-label="歌曲类型"]`**：曲库页头上还有另一颗
    *   `.segmented`（本地 / 电台 / 服务器 来源切换），而两边可见文字里都有「本地」——
    *   页头那颗指**本机磁盘上的文件**，类型这一颗才是「服务器磁盘上的歌」。不限定的话按

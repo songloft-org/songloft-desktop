@@ -194,12 +194,17 @@ src/
    │                 「全选后播放 / 入队」用的 fetchAll）/
    │                 useRowWindow（长列表的渲染窗口：只挂视口附近几十行，上下用等高空白
    │                 撑住；纯计算在 lib/row-window.ts，有单测）/
+   │                 useSelectAllShortcut（Ctrl/⌘+A 全选：一下先选中已加载的那些行，
+   │                 还没拉完时再弹一句 3 秒的「再按一次」，第二下才扩到整份筛选；
+   │                 提示由 components/Tooltip 的 flashTip 落在窗口正中，3 秒后自消）/
    │                 usePlaylistSongs / useAsync / useResponsiveSidebar /
    │                 usePageActive（页面槽的「我看得见吗」，见 §4 的页面槽那段）/
    │                 useGithubDiscovery（商店里「GitHub 发现」那一份，见 §8.12）/
    │                 useHorizontalScroll（溢出时才出的横向滚动条）
    ├─ lib/           url（资源 URL 拼接）/ color / accent / format / concurrency /
    │                 responsive（断点判定，纯函数）/
+   │                 keyboard（isTypingTarget：输入框内让开快捷键，全局与列表共用）/
+   │                 row-window（长列表的渲染窗口怎么算，纯函数 + 单测）/
    │                 window-role（「我在哪个窗口里」+「我是不是宿主」，见 §8.17）/
    │                 scrollbar-hover（给「指针压在滚动条槽上」的容器打标记，样式据此加宽
    │                 滑块；CSS 没有这个选择器，见 base.css 的滚动条那一段）/
@@ -356,7 +361,7 @@ src/
 `run.sh`（编排）、`shots.sh`（把截图整理成文档用图）、`fixtures/`（自动登录配置与封面）。
 产物落在 `.e2e/`（已 gitignore）。
 
-一次巡检 **90 步**，覆盖：首页 / 曲库（类型与分面筛选、文件夹逐级进入、服务器 / 电台 / 本地来回切）/
+一次巡检 **92 步**，覆盖：首页 / 曲库（类型与分面筛选、Ctrl+A 全选、文件夹逐级进入、服务器 / 电台 / 本地来回切）/
 歌单 / 最近 / 收藏 /
 搜索（含空态）/ 多选与右键菜单 / 设置九个分区 / 扩展面（插件管理、商店与订阅源、扩展页 webview）/
 播放（面板与满窗的歌词、队列、迷你窗）/ 当前曲在列表里的居中定位 / 命令面板 / 退出登录与登录。
@@ -372,7 +377,7 @@ target** 上跑 —— STEPS 里用第 5 项 `'mini'` 标出来（`drive.mjs` �
 | 产物 | 用途 |
 |---|---|
 | `docs/screenshots/*.png` | 主要界面单张图（1440 宽折到 1080），嵌进 README |
-| `docs/e2e-walkthrough.png` | 全部 90 个状态的覆盖图，一格一步带步骤名 —— 用于一屏扫出「哪一格是空的」 |
+| `docs/e2e-walkthrough.png` | 全部 92 个状态的覆盖图，一格一步带步骤名 —— 用于一屏扫出「哪一格是空的」 |
 
 截图一律是**浅色主题**：`fixtures/config.json` 里把 `theme` 写成了 `light`（`system` 在无桌面
 偏好的 Xvfb 里本来也解析成浅色，写死只是为了避免随环境漂）。断言与主题无关，想换深色改这一项。

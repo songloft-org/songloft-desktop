@@ -11,7 +11,9 @@ import type { Song } from '@shared/types'
 import { IconHeart, IconPlay, IconRefresh, IconShuffle } from '@/components/Icons'
 import { SelectionBar, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { PLAYLIST_COLUMNS, SongTable, type SongSort } from '@/components/SongTable'
+import { usePageActive } from '@/hooks/usePageActive'
 import { usePlaylistSongs } from '@/hooks/usePlaylistSongs'
+import { useSelectAllShortcut } from '@/hooks/useSelectAllShortcut'
 import { usePlayer } from '@/state/usePlayer'
 import { FAVORITE_PLAYLIST_ID } from '@/state/usePlaylists'
 import { useUi } from '@/state/useUi'
@@ -22,6 +24,8 @@ export function FavoritesPage(): React.JSX.Element {
   const [sort, setSort] = useState<SongSort | null>(null)
   const [selection, setSelection] = useState<number[]>([])
   const [selectAllIds, setSelectAllIds] = useState<number[] | null>(null)
+  /** 这一页现在看不看得见：Ctrl+A 只在看得见的那一页生效（见 useSelectAllShortcut） */
+  const pageActive = usePageActive()
 
   const list = usePlaylistSongs(FAVORITE_PLAYLIST_ID, {
     sort: sort?.field,
@@ -41,11 +45,28 @@ export function FavoritesPage(): React.JSX.Element {
   const handleSelectAll = async (): Promise<void> => {
     try {
       setSelectAllIds(await list.fetchAllIds())
-      setSelection([])
+      // 已经在手的那些行也标成选中：只设 id 账本的话，屏幕上一条高亮都没有
+      setSelection(list.songs.map((_, index) => index))
     } catch {
       /* 错误已落在 list.error 上 */
     }
   }
+
+  /*
+   * Ctrl/⌘+A 全选（见 hooks/useSelectAllShortcut）：整份在手就选行，还有没拉完的则先问一句，
+   * 第二下才去后端要全部 id。
+   */
+  useSelectAllShortcut({
+    active: pageActive,
+    songs: list.songs,
+    total: list.total,
+    hasMore: list.hasMore,
+    onSelectAllRows: () => {
+      setSelection(list.songs.map((_, index) => index))
+      setSelectAllIds(null)
+    },
+    onSelectAllIds: handleSelectAll
+  })
 
   return (
     <div className="page">

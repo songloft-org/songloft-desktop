@@ -56,6 +56,8 @@ import { SelectionBar, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { LIBRARY_COLUMNS, SongTable, type SongSort } from '@/components/SongTable'
 import { getFacets, SONG_TYPE_LABELS } from '@/api/endpoints'
 import { useAsync } from '@/hooks/useAsync'
+import { usePageActive } from '@/hooks/usePageActive'
+import { useSelectAllShortcut } from '@/hooks/useSelectAllShortcut'
 import { useSongList } from '@/hooks/useSongList'
 import { requireClient } from '@/state/useAuth'
 import { usePlayer } from '@/state/usePlayer'
@@ -132,6 +134,8 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
   const [selectAllIds, setSelectAllIds] = useState<number[] | null>(null)
   /** 「添加电台」对话框：只有「电台」这一档用得上，其它档位连按钮都不出现 */
   const [addingRadio, setAddingRadio] = useState(false)
+  /** 这一页现在看不看得见：Ctrl+A 只在看得见的那一页生效（见 useSelectAllShortcut） */
+  const pageActive = usePageActive()
 
   const query = useMemo(
     () => ({
@@ -186,11 +190,35 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
     try {
       const ids = await list.fetchAllIds()
       setSelectAllIds(ids)
-      setSelection([])
+      /*
+       * 已经在手的那些行也标成选中：`selectAllIds` 只是「还有多少首没到手上」的账本，
+       * 它本身不画任何东西 —— 只设它的话，按完 Ctrl+A 屏幕上一条高亮都没有，看着就像没生效。
+       */
+      setSelection(list.songs.map((_, index) => index))
     } catch {
       /* fetchAllIds 内部已经把错误暴露在 list.error 上，这里不需要额外提示 */
     }
   }, [list])
+
+  /*
+   * Ctrl/⌘+A 全选（见 hooks/useSelectAllShortcut）。
+   *
+   * ★ 两个分支的口径不同，别合并：
+   *   · 整份列表都在手 → 全选**行**（拿到的是完整对象，播放 / 入队按钮立刻可用）；
+   *   · 还有没拉完的 → 先弹一句「再按一次」的问询，确认后才走 `handleSelectAll` 去后端
+   *     取全部 id（那是 id 级选中，播放 / 入队会先补齐歌曲，见 components/SelectionBar）。
+   */
+  useSelectAllShortcut({
+    active: pageActive,
+    songs: list.songs,
+    total: list.total,
+    hasMore: list.hasMore,
+    onSelectAllRows: () => {
+      setSelection(list.songs.map((_, index) => index))
+      setSelectAllIds(null)
+    },
+    onSelectAllIds: handleSelectAll
+  })
 
   const totalForBar = selectAllIds
     ? selectAllIds

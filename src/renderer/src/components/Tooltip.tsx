@@ -21,6 +21,9 @@
  *    提示多数挂在某一行上，而那一行正是用户在看的内容，一块三百多像素宽的浮层贴在它旁边
  *    （尤其是插件管理那种五行信息的提示）会正好盖住它。
  *
+ *    ★ 例外是 `flashTip` 那条**一次性提示**（键盘动作的回执，见那里的说明）：它没有锚点、
+ *      触发时指针可能根本不在窗口里，所以固定落在**窗口正中**，不跟指针。
+ *
  * 外观见 styles/components.css 的 `.tip`：颜色全走主题 token，浅色/深色各自成立；
  * 位置与显形由这里的 placeTip 直接写 DOM（见那里的说明）。
  */
@@ -49,6 +52,13 @@ interface TipState {
   text: string
   /** 被提示的元素。宿主靠它判断指针是不是还停在上面 */
   anchor: HTMLElement | null
+  /**
+   * 键盘动作后的一次性提示（见 flashTip）。
+   *
+   * ★ 与 `text` 分开存：`text` 那条是「指针停在某元素上」的产物，指针一动就会被收掉；
+   *   而键盘触发的那一条没有锚点、也不该被指针的移动清掉 —— 它只有一个收场方式：超时。
+   */
+  flash: string
   show: (text: string, anchor: HTMLElement) => void
   hide: () => void
 }
@@ -56,10 +66,39 @@ interface TipState {
 export const useTooltip = create<TipState>((set) => ({
   text: '',
   anchor: null,
+  flash: '',
   show: (text, anchor) => set({ text, anchor }),
   // 已经收起来时返回原状态对象：滚动等高频事件会反复喊 hide，不该每次都惊动订阅者
   hide: () => set((state) => (state.text === '' ? state : { text: '', anchor: null }))
 }))
+
+/**
+ * 「一次性提示」默认多久收场（与「再按一次 Ctrl+A」那个确认窗口是同一个数，
+ * 见 hooks/useSelectAllShortcut）。
+ *
+ * ★ 3 秒：那句话本身就是「快点再按一下」的指令，等太久反而让人以为已经确认过了。
+ */
+export const FLASH_TIMEOUT = 3000
+
+let flashTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 弹一条**一次性**提示：不走悬停那条路，也不需要锚点 —— 键盘动作之后用来交代
+ * 「刚才那一下为什么没有立刻生效、接下来该按什么」。
+ *
+ * ★ 只有超时会收它（见上面 flash 的说明），所以它是可以带操作指令的一句话；
+ *   新的提示顶掉旧的（不会叠两条）。
+ * ★ 位置照旧用最后一次的指针坐标（见 placeTip）：键盘操作时指针往往还停在用户刚看的
+ *   那一块上，提示弹在它旁边最容易被看到。
+ */
+export function flashTip(text: string, durationMs = FLASH_TIMEOUT): void {
+  if (flashTimer !== null) clearTimeout(flashTimer)
+  useTooltip.setState({ flash: text })
+  flashTimer = setTimeout(() => {
+    flashTimer = null
+    useTooltip.setState({ flash: '' })
+  }, durationMs)
+}
 
 /** 待弹的那一次。同一时刻最多只有一个（鼠标只可能停在一个地方） */
 let showTimer: ReturnType<typeof setTimeout> | null = null
@@ -110,6 +149,26 @@ function placeTip(element: HTMLElement): void {
 
   element.style.left = `${Math.max(MARGIN, left)}px`
   element.style.top = `${Math.max(MARGIN, top)}px`
+  element.style.visibility = 'visible'
+}
+
+/**
+ * 一次性提示（flashTip）摆到哪儿：**窗口正中**，不跟指针。
+ *
+ * ★ 为什么不跟指针：它是键盘动作的回执（「再按一次…」），触发时指针多半停在别处、
+ *   甚至根本不在窗口里 —— 跟着指针走的话，那句话会弹在离视线很远的地方。正中是视线
+ *   的自然落点，也不用去猜「内容区在哪」：侧栏展开/折叠、右侧抽屉宽度都在变，
+ *   按主列的 rect 算居中反而会随这些无关的东西漂。
+ * ★ 居中按浮层自己的宽高算（offsetWidth/offsetHeight）：所以 CSS 里不必再加一层
+ *   `translate(-50%, -50%)`，也就不会和「left/top 由这里独家写」的约定打架。
+ * ★ 它是 `pointer-events: none` 的，压在内容正中间也不吃点击、不妨碍标题栏拖拽。
+ */
+function placeFlash(element: HTMLElement): void {
+  const left = (window.innerWidth - element.offsetWidth) / 2
+  const top = (window.innerHeight - element.offsetHeight) / 2
+
+  element.style.left = `${Math.round(left)}px`
+  element.style.top = `${Math.round(top)}px`
   element.style.visibility = 'visible'
 }
 
@@ -221,6 +280,9 @@ function bindGlobalListeners(): void {
 
 export function TooltipHost(): React.JSX.Element | null {
   const text = useTooltip((state) => state.text)
+  const flash = useTooltip((state) => state.flash)
+  /** 悬停提示优先：它正跟着指针，比一条正在倒计时的一次性提示更「当下」 */
+  const content = text || flash
 
   useEffect(() => bindGlobalListeners(), [])
 
@@ -232,10 +294,19 @@ export function TooltipHost(): React.JSX.Element | null {
    *   在此之前指针每动一下都由全局 pointermove 重摆，不经过 React。
    */
   useLayoutEffect(() => {
-    if (tipElement) placeTip(tipElement)
-  }, [text])
+    if (!tipElement) return
+    /*
+     * 两条通道两个落点：
+     *   · 悬停提示跟着指针（placeTip）；
+     *   · 一次性提示（flashTip）在窗口正中（placeFlash）—— 它是键盘动作的回执，
+     *     没有锚点也没有指针位置可言。
+     */
+    if (!text && flash) placeFlash(tipElement)
+    else placeTip(tipElement)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content])
 
-  if (!text) return null
+  if (!content) return null
   // aria-hidden：这一层纯粹是补视觉。名字该由元素自己的 aria-label 承担
   // （转换前挂在 title 上的那批，都补了 aria-label）
   // 初始不可见写在 .tip 里：要等 placeTip 量完尺寸才亮，否则会先在左上角闪一下
@@ -245,9 +316,10 @@ export function TooltipHost(): React.JSX.Element | null {
         tipElement = element
       }}
       className="tip"
+      data-flash={!text && flash ? 'true' : undefined}
       aria-hidden="true"
     >
-      {text}
+      {content}
     </div>
   )
 }

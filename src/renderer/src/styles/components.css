@@ -3381,6 +3381,26 @@ select.input option[data-separator] {
   pointer-events: none;
 }
 
+/*
+ * 键盘动作后的一次性提示（见 Tooltip.tsx 的 flashTip）。
+ *
+ * 它与悬停提示是**同一块浮层**，但那一条还带着一句「接下来按什么」的指令，分量更重：
+ * 描边走强调色、底色也掺一点点强调色，一眼能与「这个按钮是干什么的」那种说明区分开。
+ * ★ padding 与 max-width 给得比悬停提示更宽：那句话通常是一整句。
+ * ★ 位置由 placeFlash 写死为「窗口正中」（left/top 内联），这里不再掺和坐标；
+ *   也不加 transform —— 居中由那边按实际宽高算，加一层 translate(-50%, -50%) 会把它翻倍。
+ * ★ 只压一点点透明度（0.92）：它压在内容正中，整块浮层若做成 30% 不透明度，字会跟着
+ *   一起淡掉、底下的列表反过来透上来，读那句话反而更费劲 —— 要的是「看着不刺眼」，
+ *   不是「看不清」。这点透明度只够让边框与底色软一点，正文仍然是实的。
+ */
+.tip[data-flash='true'] {
+  padding: 7px 11px;
+  max-width: 380px;
+  opacity: 0.92;
+  border-color: var(--accent-line);
+  background: color-mix(in srgb, var(--bg-3) 92%, var(--accent));
+}
+
 /* ── 提示条 ───────────────────────────────────────────────────────────── */
 
 /*

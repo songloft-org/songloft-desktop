@@ -46,6 +46,7 @@ import { TooltipHost } from './components/Tooltip'
 import { useResponsiveSidebar } from './hooks/useResponsiveSidebar'
 import { PageActiveProvider } from './hooks/usePageActive'
 import { formatVersion } from './lib/format'
+import { isTypingTarget } from './lib/keyboard'
 import { FavoritesPage } from './pages/FavoritesPage'
 import { HomePage } from './pages/HomePage'
 import { LibraryPage } from './pages/LibraryPage'
@@ -124,12 +125,7 @@ async function checkUpdatesInBackground(): Promise<void> {
 }
 
 /** 只在输入类元素之外响应空格这类「会打字的键」 */
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  if (target.isContentEditable) return true
-  const tag = target.tagName
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
-}
+/* isTypingTarget 挪到了 lib/keyboard（列表里的 Ctrl+A 也要用同一份判断，见那里） */
 
 export function App(): React.JSX.Element {
   const status = useAuth((s) => s.status)

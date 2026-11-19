@@ -2947,6 +2947,12 @@ function ShortcutsSettings(): React.JSX.Element {
       <Row title="Ctrl / Cmd + F" desc="聚焦到搜索框">
         <span className="badge">导航</span>
       </Row>
+      <Row
+        title="Ctrl / Cmd + A"
+        desc="选中当前已加载的歌曲；列表没加载完时再按一次，才把范围扩到整份筛选（3 秒内有效）"
+      >
+        <span className="badge">列表</span>
+      </Row>
       <Row title="Alt + ←" desc="返回上一页">
         <span className="badge">导航</span>
       </Row>

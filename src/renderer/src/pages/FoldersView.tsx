@@ -24,6 +24,8 @@ import { SelectionBar, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { LIBRARY_COLUMNS, SongTable } from '@/components/SongTable'
 import { getFolders } from '@/api/endpoints'
 import { useAsync } from '@/hooks/useAsync'
+import { usePageActive } from '@/hooks/usePageActive'
+import { useSelectAllShortcut } from '@/hooks/useSelectAllShortcut'
 import { requireClient } from '@/state/useAuth'
 import { usePlayer } from '@/state/usePlayer'
 import { useUi } from '@/state/useUi'
@@ -33,6 +35,8 @@ export function FoldersView({ path }: { path: string }): React.JSX.Element {
   const playSongs = usePlayer((s) => s.playSongs)
   const [selection, setSelection] = useState<number[]>([])
   const [selectAllIds, setSelectAllIds] = useState<number[] | null>(null)
+  /** 这一页现在看不看得见：Ctrl+A 只在看得见的那一页生效（见 useSelectAllShortcut） */
+  const pageActive = usePageActive()
 
   const result = useAsync(() => getFolders(requireClient(), path), [path])
   const data = result.data
@@ -56,6 +60,24 @@ export function FoldersView({ path }: { path: string }): React.JSX.Element {
     setSelection([])
     setSelectAllIds(null)
   }
+
+  /*
+   * Ctrl/⌘+A 全选（见 hooks/useSelectAllShortcut）。这一页的目录是一次取完的（没有分页），
+   * 所以永远走「整份在手 → 选行」那条：`hasMore` 恒为 false，确认提示不会出现。
+   */
+  useSelectAllShortcut({
+    active: pageActive,
+    songs,
+    total: songs.length,
+    hasMore: false,
+    onSelectAllRows: () => {
+      setSelection(songs.map((_, index) => index))
+      setSelectAllIds(null)
+    },
+    onSelectAllIds: () => {
+      /* 不会到这里：这一页没有「还没加载完」的状态 */
+    }
+  })
 
   /** 报给页头那行副标题（目录摘要 —— 数字只有这一块知道，见 LibraryHeader） */
   const subtitle =

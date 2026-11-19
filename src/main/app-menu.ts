@@ -51,7 +51,19 @@ export function installAppMenu(getWindow: () => BrowserWindow | null): void {
         { label: '剪切', role: 'cut' },
         { label: '复制', role: 'copy' },
         { label: '粘贴', role: 'paste' },
-        { label: '全选', role: 'selectAll' }
+        {
+          /**
+           * ★ 这一项刻意**不用 `role: 'selectAll'`**：那个角色会自带一条
+           *   `CmdOrCtrl+A` 加速键，而菜单的加速键在**窗口之前**就把按键吃掉了 ——
+           *   渲染层永远收不到这一下，列表里的「Ctrl+A 全选歌曲」于是成了死键
+           *   （界面上只会看见一段文字被刷蓝）。
+           *   改成普通的 click（无加速键）之后：菜单项照样能用；而输入框里的
+           *   Ctrl+A 仍由 Chromium 自带的编辑行为处理 —— 那是浏览器的默认动作，
+           *   不依赖菜单里的这一条。
+           */
+          label: '全选',
+          click: () => getWindow()?.webContents.selectAll()
+        }
       ]
     },
     {

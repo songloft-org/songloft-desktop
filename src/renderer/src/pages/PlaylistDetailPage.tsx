@@ -39,7 +39,9 @@ import {
   updatePlaylistSort
 } from '@/api/endpoints'
 import { useAsync } from '@/hooks/useAsync'
+import { usePageActive } from '@/hooks/usePageActive'
 import { usePlaylistSongs } from '@/hooks/usePlaylistSongs'
+import { useSelectAllShortcut } from '@/hooks/useSelectAllShortcut'
 import { formatDuration } from '@/lib/format'
 import { requireClient } from '@/state/useAuth'
 import { usePlayer } from '@/state/usePlayer'
@@ -77,6 +79,8 @@ export function PlaylistDetailPage({ playlistId }: { playlistId: number }): Reac
   const [keyword, setKeyword] = useState('')
   const [selection, setSelection] = useState<number[]>([])
   const [selectAllIds, setSelectAllIds] = useState<number[] | null>(null)
+  /** 这一页现在看不看得见：Ctrl+A 只在看得见的那一页生效（见 useSelectAllShortcut） */
+  const pageActive = usePageActive()
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState('')
   const [editDesc, setEditDesc] = useState('')
@@ -115,6 +119,31 @@ export function PlaylistDetailPage({ playlistId }: { playlistId: number }): Reac
     setSelection([])
     setSelectAllIds(null)
   }, [])
+
+  /*
+   * Ctrl/⌘+A 全选（见 hooks/useSelectAllShortcut）：整份在手就选行，还有没拉完的则先问一句，
+   * 第二下才去后端要全部 id。
+   */
+  useSelectAllShortcut({
+    active: pageActive,
+    songs: list.songs,
+    total: list.total,
+    hasMore: list.hasMore,
+    onSelectAllRows: () => {
+      setSelection(list.songs.map((_, index) => index))
+      setSelectAllIds(null)
+    },
+    onSelectAllIds: () => {
+      void list
+        .fetchAllIds()
+        .then((ids) => {
+          setSelectAllIds(ids)
+          // 已经在手的那些行也标成选中（否则屏幕上一条高亮都没有，看着像没生效）
+          setSelection(list.songs.map((_, index) => index))
+        })
+        .catch(() => undefined)
+    }
+  })
 
   const applySort = useCallback(
     (next: ViewSort) => {

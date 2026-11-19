@@ -17,6 +17,8 @@ import { SelectionBar, shouldShowSelectionBar } from '@/components/SelectionBar'
 import { LIBRARY_COLUMNS, SongTable, type SongSort } from '@/components/SongTable'
 import { getFacets, getPlaylists } from '@/api/endpoints'
 import { useAsync } from '@/hooks/useAsync'
+import { usePageActive } from '@/hooks/usePageActive'
+import { useSelectAllShortcut } from '@/hooks/useSelectAllShortcut'
 import { useSongList } from '@/hooks/useSongList'
 import { requireClient } from '@/state/useAuth'
 import { usePlayer } from '@/state/usePlayer'
@@ -29,6 +31,8 @@ export function SearchPage({ keyword }: { keyword: string }): React.JSX.Element 
   const [sort, setSort] = useState<SongSort | null>(null)
   const [selection, setSelection] = useState<number[]>([])
   const [selectAllIds, setSelectAllIds] = useState<number[] | null>(null)
+  /** 这一页现在看不看得见：Ctrl+A 只在看得见的那一页生效（见 useSelectAllShortcut） */
+  const pageActive = usePageActive()
 
   useEffect(() => setDraft(keyword), [keyword])
   // 换关键词时清掉上一次的选中态，否则会拿旧下标去索引新结果
@@ -54,6 +58,31 @@ export function SearchPage({ keyword }: { keyword: string }): React.JSX.Element 
     () => selection.map((i) => list.songs[i]).filter((s): s is Song => Boolean(s)),
     [selection, list.songs]
   )
+
+  /*
+   * Ctrl/⌘+A 全选（见 hooks/useSelectAllShortcut）：整份在手就选行，还有没拉完的则先问一句，
+   * 第二下才去后端要全部 id。`pageActive` 保证只有看得见的那一页响应（页面槽常驻）。
+   */
+  useSelectAllShortcut({
+    active: pageActive,
+    songs: list.songs,
+    total: list.total,
+    hasMore: list.hasMore,
+    onSelectAllRows: () => {
+      setSelection(list.songs.map((_, index) => index))
+      setSelectAllIds(null)
+    },
+    onSelectAllIds: () => {
+      void list
+        .fetchAllIds()
+        .then((ids) => {
+          setSelectAllIds(ids)
+          // 已经在手的那些行也标成选中（否则屏幕上一条高亮都没有，看着像没生效）
+          setSelection(list.songs.map((_, index) => index))
+        })
+        .catch(() => undefined)
+    }
+  })
 
   const matchedPlaylists = playlists.data?.playlists ?? []
   const matchedArtists = artistFacets.data?.facets ?? []
