@@ -15,6 +15,7 @@ import { createRoot } from 'react-dom/client'
 
 import { App } from './App'
 import { MiniApp } from './MiniApp'
+import { installScrollbarHoverTracking } from './lib/scrollbar-hover'
 import { isMiniWindow } from './lib/window-role'
 import './styles/index.css'
 
@@ -43,5 +44,13 @@ window.addEventListener('contextmenu', (event) => {
   if (target instanceof HTMLElement && target.closest('input, textarea')) return
   event.preventDefault()
 })
+
+/*
+ * 「指针压在滚动条槽上」的全局检测（见 lib/scrollbar-hover.ts）：它只给那个容器打一个
+ * data-scrollbar-hover，样式据此把滑块变实、变宽（见 base.css 的滚动条那一段）。
+ * 装在窗口入口而不是某个组件里：主窗口与迷你窗的每一块可滚区域都要它，而它不依赖任何
+ * 会话 / 路由 / 设置 —— 早一帧装上，用户第一次去拖滚动条时就已经是宽的那一档了。
+ */
+installScrollbarHoverTracking()
 
 createRoot(container).render(<StrictMode>{mini ? <MiniApp /> : <App />}</StrictMode>)

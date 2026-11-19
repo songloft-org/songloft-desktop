@@ -196,8 +196,10 @@ src/
    ├─ lib/           url（资源 URL 拼接）/ color / accent / format / concurrency /
    │                 responsive（断点判定，纯函数）/
    │                 window-role（「我在哪个窗口里」+「我是不是宿主」，见 §8.17）/
+   │                 scrollbar-hover（给「指针压在滚动条槽上」的容器打标记，样式据此加宽
+   │                 滑块；CSS 没有这个选择器，见 base.css 的滚动条那一段）/
    │                 plugin-actions（插件的停用 / 卸载 —— 确认与提示只有这一份，
-   │                 将来再加入口别另写；lib/ 里唯一一个不是纯函数的）
+   │                 将来再加入口别另写；lib/ 里少数带副作用的模块之一）
    └─ styles/        tokens.css / base.css / components.css / index.css
 ```
 

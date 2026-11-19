@@ -121,7 +121,28 @@ a {
   border-radius: var(--r-xs);
 }
 
-/* 滚动条：细、低调、悬停才明显 */
+/* ── 滚动条 ────────────────────────────────────────────────────────────────
+ *
+ * 三档，**变的都是滑块、不是槽**：
+ *
+ *   ① 默认（没人碰它）      可见 4px、最淡（--surface-3）、轨迹不显形
+ *   ② 指针进到**槽**上      可见 6px、更实（--text-4）+ **轨迹衬出来**（--surface-2）
+ *   ③ 指针直接压在滑块上    可见 6px、最实（--text-3）—— 就是要拖它
+ *
+ * ★ 加宽靠**透明边框 + background-clip: padding-box**（10 − 3×2 = 4px，10 − 2×2 = 6px），
+ *   不是改 `::-webkit-scrollbar` 的 width：槽宽一改，滚动槽就跟着变，内容宽度当场被挤动
+ *   （列表会左右抖一下）。这个手艺侧栏那条滚动条已经在用，两处几何一致。
+ * ★ ② 靠 JS 打的标记挑（`[data-scrollbar-hover]`，见 lib/scrollbar-hover.ts）：CSS 没有
+ *   「指针在滚动条上」这个选择器，而容器自己的 `:hover` 连「指针在内容上」也算 —— 主内容区
+ *   整屏都可滚，那样等于一直粗着。为什么不能写 `::-webkit-scrollbar:hover` 见那个文件头部。
+ * ★ 颜色全走主题令牌（深色是白膜、浅色是暗膜）：三档只表达「越来越实」，两套主题各自成立，
+ *   不必为浅色再写一份。
+ * ★ ③ 必须排在 ② **之后**：两条特异性相同（0,1,1），指针压在滑块上时同时命中，靠先后定胜负。
+ * ★ 只写 background-color（长写）：background 简写会把这层背景的 background-clip:
+ *   padding-box 重置回 border-box，透明边框就兜不住背景 —— 滑块会铺满整条槽。
+ * ★ transition 写在基础那条上：Chromium 的滚动条由合成器绘制，过渡不一定生效 —— 写了不亏，
+ *   不支持时它就当没看见，三档仍然照样切换。
+ */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -130,17 +151,60 @@ a {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--surface-2);
-  border: 3px solid transparent;
+  background-color: var(--surface-3);
+  border: 3px solid transparent; /* 10 − 3×2 = 4px 可见 */
   background-clip: padding-box;
   border-radius: var(--r-pill);
+  /*
+   * 滑块的**最小长度**：滑块长度是按「可视比例」算的，内容越长它越短 —— Chromium 自带的下限
+   * 实测只有 15px 上下，几万像素的列表里指针得精准命中它才拖得动。36px 是还给指针的一点余量
+   * （两端各让 3px 透明边框，可见约 30px，仍是槽宽的 3 倍）；内容短、按比例算出来比这还长时
+   * 一切照旧 —— 它只是**下限**。
+   * ★ 纵向看 min-height、横向看 min-width：同一套规则服务两种方向，浏览器只取当前方向
+   *   那一个 —— 另一个不会影响滑块的**粗细**（粗细由槽宽定，实测 min-width 不会把它撑宽）。
+   * ★ 侧栏那条滚动条沿用同一条下限（它只覆盖槽宽与颜色，不重写这两行）。
+   */
+  min-height: 36px;
+  min-width: 36px;
+  transition:
+    background-color var(--dur-2) var(--ease),
+    border-width var(--dur-2) var(--ease);
 }
+/* ② 指针进到槽上（JS 打标记，见 lib/scrollbar-hover.ts）：滑块变实变宽，轨迹同时显形。
+   ★ 轨迹平时是透明的（见上面那条 track），进槽才衬一层 --surface-2 —— 于是「滑块在哪、
+     这条轨道还有多长、能拖到哪儿」一眼可见；滑块那圈透明边框也正好落在这层底上，
+     不会看起来像浮在空气里。
+   ★ 圆角与滑块同一档：轨迹两端跟着槽的形状收口，不会露出一截方角。 */
+[data-scrollbar-hover='true']::-webkit-scrollbar-thumb {
+  background-color: var(--text-4);
+  border-width: 2px; /* 10 − 2×2 = 6px 可见 */
+}
+[data-scrollbar-hover='true']::-webkit-scrollbar-track {
+  background-color: var(--surface-2);
+  border-radius: var(--r-pill);
+}
+/* ③ 指针压在滑块上：同宽，再实一档（拖起来的手感全靠这一档） */
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--surface-3);
-  background-clip: padding-box;
+  background-color: var(--text-3);
+  border-width: 2px;
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+/*
+ * 非 WebKit 引擎（Firefox 之类）拿不到上面那套伪元素。给一条标准属性兜底：
+ * 它只有**一档**（没有 hover），所以直接取中间那档颜色的宽度观感，至少保证「看得见、拖得动」。
+ * ★ 必须包在 @supports not selector(...) 里：Chromium 一旦看到 scrollbar-width /
+ *   scrollbar-color，就**整份忽略** ::-webkit-scrollbar —— 不包的话这条兜底反而会把上面
+ *   调好的三档一起废掉。
+ * （本应用跑在 Electron 里，渲染层永远是 Chromium，这一支实际到不了；它只是保证换引擎时
+ *   行为不退化，与 .sidebar-playlists 末尾那条同一个理由。）
+ */
+@supports not selector(::-webkit-scrollbar) {
+  :root {
+    scrollbar-width: thin;
+    scrollbar-color: var(--text-4) transparent;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1114,10 +1178,13 @@ html[data-menu='open'] .plugin-view {
   padding-top: var(--sidebar-group-gap);
 }
 
-/* 歌单列表的滚动条：三档状态机。
+/* 歌单列表的滚动条：四档状态机。
    ① 什么都不悬浮          —— 半透明（--surface-1，明度阶梯里最淡的一档）
    ② 鼠标进入这块可滚动区域  —— 显形（--surface-2）
-   ③ 鼠标直接压在滚动条上    —— 再提亮一档（--surface-3）并加粗（4px → 6px），便于点击拖动
+   ③ 鼠标直接压在滑块上      —— 再提亮一档（--surface-3）并加粗（4px → 6px），便于点击拖动
+   ④ 鼠标进到**槽**上        —— 与 ③ 同一档（0,2,1；槽上就是它，不必再分两档）。这一档由
+                              JS 打的 [data-scrollbar-hover] 挑（见 lib/scrollbar-hover.ts），
+                              与全局那套滚动条同一个口径：进槽就变实变宽，不必先精准按到滑块
 
    ★ 槽宽取 --sidebar-pad-x（舒适 8px / 紧凑 9px），跟全局那 10px 不同：右侧那一段空档
      只有内边距那么宽（见 .sidebar-playlists 的说明），槽再宽就顶到列表项身上了。
@@ -1128,8 +1195,8 @@ html[data-menu='open'] .plugin-view {
    左右抖一下；边框怎么改都不影响布局。透明边框全留在**左侧**，滑块永远贴着右边缘、
    加粗也只往左长，右侧那 1px 外边距在每一档都留着。
 
-   ★ 三档必须写三条规则、而且 ③ 要排在 ② 之后：
-     · ② 与 ③ 的特异性完全相同（都是 0,2,1），指针压在滚动条上时两者同时命中
+   ★ 四档必须写四条规则、而且后面的要排在前面之后：
+     · ② / ③ / ④ 的特异性完全相同（都是 0,2,1），指针压在滚动条上时后两条同时命中
        （滚动条属于这个元素，所以它也让 :hover 成立），靠源码顺序决胜负；
      · 不能合成选择器列表：::-webkit-scrollbar:hover::-webkit-scrollbar-thumb 那种写法
        Chromium 根本不认（CSS.supports('selector(...)') 实测 false），而选择器一旦非法，
@@ -1138,7 +1205,9 @@ html[data-menu='open'] .plugin-view {
      background-clip: padding-box 重置回 border-box，透明边框就兜不住背景了 ——
      滑块会在悬浮时悄悄铺满整条槽、右侧 1px 也一起没掉。
    ★ transition 写在基础那条上：滚动条伪元素能不能跑过渡由引擎决定（Chromium 的滚动条
-     由合成器绘制，有可能直接跳变）。写了不亏 —— 不支持时它就当没看见，三档照样切换。 */
+     由合成器绘制，有可能直接跳变）。写了不亏 —— 不支持时它就当没看见，三档照样切换。
+   ★ 滑块的**最小长度**（36px）与进槽时那层**轨迹底色**不在这里写：它们是全局那两条
+     （见文件上半部分），这一节只覆盖「这条滚动条自己不一样的地方」—— 槽宽、三档颜色与边框。 */
 .sidebar-playlists::-webkit-scrollbar {
   width: var(--sidebar-pad-x);
 }
@@ -1157,8 +1226,14 @@ html[data-menu='open'] .plugin-view {
   background-color: var(--surface-2);
 }
 
-/* ③ 鼠标直接压在滚动条上：提亮 + 加粗（8 - 1 - 1 = 6px 可见） */
+/* ③ 鼠标直接压在滑块上：提亮 + 加粗（8 - 1 - 1 = 6px 可见） */
 .sidebar-playlists::-webkit-scrollbar-thumb:hover {
+  background-color: var(--surface-3);
+  border-width: 0 1px 0 1px;
+}
+
+/* ④ 指针进到槽上（JS 标记，见 lib/scrollbar-hover.ts）：与 ③ 同一档 */
+.sidebar-playlists[data-scrollbar-hover='true']::-webkit-scrollbar-thumb {
   background-color: var(--surface-3);
   border-width: 0 1px 0 1px;
 }
