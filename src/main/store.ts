@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path'
 import { DEFAULT_SETTINGS, type AppSettings, type ServerEntry } from '@shared/ipc'
 import { EMPTY_RENDER_CACHE_STATE, type RenderCacheState } from '@shared/render-cache'
 import { PLAY_MODES } from '@shared/types'
+import type { PendingClientUpdate } from '@shared/update'
 import type { StoredCredentials } from '@shared/bridge-types'
 
 export type { StoredCredentials }
@@ -45,6 +46,14 @@ interface ConfigFile {
    *   而它要防的正是「旧远端代码跨版本驻留」。
    */
   renderCache: RenderCacheState
+  /**
+   * 已经下载好、等着在下次启动时提示安装的那一份安装包（见 main/pending-update.ts）。
+   *
+   * ★ 与 renderCache 同一类：只有主进程读写，**不属于 AppSettings** —— 后者会整份交给
+   *   渲染层，而这是一份内部簿记，混进去等于让它变成「可改的偏好」。
+   * ★ 必须落盘：从下载完到下次启动之间进程会重启，只放内存就等于没记。
+   */
+  pendingUpdate: PendingClientUpdate | null
 }
 
 const DEFAULT_WINDOW: WindowBounds = { width: 1440, height: 920, maximized: false }
@@ -66,7 +75,31 @@ function emptyConfig(): ConfigFile {
     servers: [],
     credentials: {},
     window: { ...DEFAULT_WINDOW },
-    renderCache: { ...EMPTY_RENDER_CACHE_STATE }
+    renderCache: { ...EMPTY_RENDER_CACHE_STATE },
+    pendingUpdate: null
+  }
+}
+
+/**
+ * 待安装记录的形状归一：任何一项对不上就当没记过（返回 null）。
+ *
+ * ★ 这份 JSON 是用户（以及别的程序）能改的：宁可当成「没有待安装的更新」，也不要拿半截
+ *   记录去碰文件系统或 shell —— 那正是这条路里最危险的一步（主进程会按它 openPath）。
+ */
+function pendingUpdateOf(value: unknown): PendingClientUpdate | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Partial<PendingClientUpdate>
+  if (typeof raw.path !== 'string' || !raw.path) return null
+  if (typeof raw.version !== 'string' || !raw.version) return null
+  if (typeof raw.name !== 'string' || !raw.name) return null
+  if (typeof raw.size !== 'number' || !Number.isFinite(raw.size) || raw.size <= 0) return null
+  if (typeof raw.downloadedAt !== 'number' || !Number.isFinite(raw.downloadedAt)) return null
+  return {
+    path: raw.path,
+    version: raw.version,
+    name: raw.name,
+    size: raw.size,
+    downloadedAt: raw.downloadedAt
   }
 }
 
@@ -149,7 +182,8 @@ export class ConfigStore {
           client: typeof raw.renderCache?.client === 'string' ? raw.renderCache.client : '',
           backend: stringMap(raw.renderCache?.backend),
           plugins: stringMap(raw.renderCache?.plugins)
-        }
+        },
+        pendingUpdate: pendingUpdateOf(raw.pendingUpdate)
       }
     } catch (error) {
       console.error('[store] 配置读取失败，回退到默认值', error)
@@ -283,6 +317,17 @@ export class ConfigStore {
         backend: { ...state.backend },
         plugins: { ...state.plugins }
       }
+    })
+  }
+
+  // ── 待安装的客户端更新（见 main/pending-update.ts）────────────────────────
+  getPendingUpdate(): PendingClientUpdate | null {
+    return this.data.pendingUpdate ? { ...this.data.pendingUpdate } : null
+  }
+
+  setPendingUpdate(update: PendingClientUpdate | null): void {
+    this.mutate((data) => {
+      data.pendingUpdate = update ? { ...update } : null
     })
   }
 

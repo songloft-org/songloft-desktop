@@ -71,6 +71,8 @@ import { LOCAL_FILE_SCHEME } from '@shared/local-file'
 import { PLUGIN_PARTITION } from '@shared/plugin'
 import type { RenderCacheRequest } from '@shared/render-cache'
 import { PORTABLE_MARKER_FILE, chooseUserDataDir, portableDataDir } from '@shared/user-data'
+import { isNewerVersion } from '@shared/version'
+import { acceptPendingUpdate, readPendingUpdate } from './pending-update'
 import { ConfigStore } from './store'
 import { createTray, destroyTray, render as renderTray, type TrayDeps } from './tray'
 import { applyWindowOnTop, createMainWindow } from './windows'
@@ -675,15 +677,39 @@ function registerIpcHandlers(): void {
   /*
    * 安装包下载。进度发回**发起下载的那个窗口**（`event.sender`）而不是 sendToRenderer：
    * 这条流只属于它，发广播会让迷你窗也收到一份没人看的进度。
+   *
+   * 下完之后**落一份待安装记录**（见 main/pending-update.ts）：下次启动时渲染层来问，
+   * 主进程校验文件还在就提示用户打开安装程序。只在目标版本确实比当前新时记 —— 记录一旦
+   * 落盘，下次启动会拿它去拉起安装器，装一个同版本或旧版本没有意义。
    */
-  ipcMain.handle(IPC.clientUpdateDownload, (event, request: ClientUpdateDownloadRequest) =>
-    downloadClientUpdate(request, (progress) => {
+  ipcMain.handle(IPC.clientUpdateDownload, async (event, request: ClientUpdateDownloadRequest) => {
+    const result = await downloadClientUpdate(request, (progress) => {
       if (!event.sender.isDestroyed()) event.sender.send(IPC.onClientUpdateProgress, progress)
     })
-  )
+    if (request.version && isNewerVersion(request.version, app.getVersion())) {
+      store.setPendingUpdate({
+        path: result.path,
+        version: request.version,
+        name: request.asset.name,
+        size: result.bytes,
+        downloadedAt: Date.now()
+      })
+    }
+    return result
+  })
   ipcMain.handle(IPC.clientUpdateCancel, () => cancelClientUpdate())
-  ipcMain.handle(IPC.clientUpdateOpen, () => openDownloadedUpdate())
+  ipcMain.handle(IPC.clientUpdateOpen, async () => {
+    await openDownloadedUpdate()
+    // 用户已经在本会话里打开过安装器：下次启动不必再提示一次
+    store.setPendingUpdate(null)
+  })
   ipcMain.handle(IPC.clientUpdateReveal, () => revealDownloadedUpdate())
+  /*
+   * 待安装记录：读的时候主进程会顺手校验（文件还在、大小没变、版本仍更新），不可用的
+   * 记录当场清掉。渲染层拿到的就是「真能装的那一份」，界面不必再判断一遍。
+   */
+  ipcMain.handle(IPC.clientUpdatePending, () => readPendingUpdate(store))
+  ipcMain.handle(IPC.clientUpdatePendingAccept, () => acceptPendingUpdate(store))
   ipcMain.handle(IPC.githubDiscovery, (_event, request: GithubDiscoveryRequest) =>
     discoverGithubPlugins(request)
   )

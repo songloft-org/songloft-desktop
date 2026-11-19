@@ -33,6 +33,7 @@ import type {
 import type { CoverBytes, SongloftBridge, StoredCredentials } from '@shared/bridge'
 import type { CastAction, CastRequest, DlnaDevice, DlnaStatus } from '@shared/dlna'
 import type { GithubDiscoveryRequest, GithubDiscoveryResult } from '@shared/github-discovery'
+import type { PendingClientUpdate } from '@shared/update'
 
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
   const listener = (_event: Electron.IpcRendererEvent, payload: T): void => handler(payload)
@@ -122,6 +123,10 @@ const bridge: SongloftBridge = {
     cancelClientUpdate: () => ipcRenderer.invoke(IPC.clientUpdateCancel) as Promise<void>,
     openClientUpdate: () => ipcRenderer.invoke(IPC.clientUpdateOpen) as Promise<void>,
     revealClientUpdate: () => ipcRenderer.invoke(IPC.clientUpdateReveal) as Promise<void>,
+    pendingClientUpdate: () =>
+      ipcRenderer.invoke(IPC.clientUpdatePending) as Promise<PendingClientUpdate | null>,
+    acceptPendingClientUpdate: () =>
+      ipcRenderer.invoke(IPC.clientUpdatePendingAccept) as Promise<void>,
     onClientUpdateProgress: (handler) =>
       subscribe<ClientUpdateProgress>(IPC.onClientUpdateProgress, handler)
   },

@@ -82,6 +82,15 @@ export const IPC = {
   /** 在文件管理器里定位刚下好的安装包 */
   clientUpdateReveal: 'app:reveal-client-update',
   /**
+   * 上次下载好、等着在下次启动时提示安装的那一份（没有就是 null）。
+   *
+   * ★ 读的时候会顺手校验：文件还在、大小没变、目标版本仍比当前新。不可用的记录当场清掉，
+   *   所以这里返回的是「真能装的那一份」，界面不必再判断一遍。
+   */
+  clientUpdatePending: 'app:client-update-pending',
+  /** 打开那份待安装的安装程序（成功即清掉记录；用户在安装器里取消不影响当前版本） */
+  clientUpdatePendingAccept: 'app:accept-pending-update',
+  /**
    * 主进程代查「GitHub 发现」（插件商店里的那一份社区来源）。
    *
    * 与 clientUpdateCheck 同一条理由 —— 渲染层不直连第三方。另外这里还要逐仓库核对清单与
@@ -461,6 +470,13 @@ export interface ClientUpdateCheck {
 export interface ClientUpdateDownloadRequest extends ClientUpdateProxies {
   /** 要下的那一份 —— 就是 ClientUpdateCheck.asset 给出来的那个 */
   asset: ClientUpdateAsset
+  /**
+   * 目标版本 tag（`ClientUpdateCheck.latestTag`）。
+   *
+   * 主进程拿它落一份「下次启动时提示安装」的记录 —— 没有版本就判不出「是不是已经装着
+   * 这个版本了」，下次启动会变成一个永远弹的提示。
+   */
+  version: string
 }
 
 export interface ClientUpdateDownloadResult {
