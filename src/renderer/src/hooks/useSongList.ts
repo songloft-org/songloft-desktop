@@ -21,6 +21,12 @@ import { requireClient } from '@/state/useAuth'
 import { useLibrary } from '@/state/useLibrary'
 import { usePageActive } from './usePageActive'
 
+/**
+ * `loadAll` 的收场（见接口上的说明）：complete = 到底了；failed = 真失败；
+ * cancelled = 这一代列表被顶掉了（换筛选 / 刷新），不算错。
+ */
+export type LoadAllResult = 'complete' | 'failed' | 'cancelled'
+
 export interface SongListController {
   songs: Song[]
   total: number
@@ -41,9 +47,12 @@ export interface SongListController {
    * 「播放全部」用它：起播只等已经在手的那一页，剩下的边拉边接进播放队列
    * （见 pages/LibraryPage）—— 用户不必等整份列表就位才开始听。
    *
-   * @returns 是否**一路拉到了底**（取消 / 出错 / 后端不再给数据都是 false）。
+   * @returns 三态，**必须区分**（调用方据此决定「提示重试」还是「静默收手」）：
+   *   · `complete`  —— 一路拉到了底；
+   *   · `failed`    —— 没拉完就停了：分页请求出错，或某页零新增（后端排序平局打转）；
+   *   · `cancelled` —— 作废：筛选 / 刷新把这一代列表顶掉了，不是错误，该静默。
    */
-  loadAll: (onPage?: (songs: Song[]) => void) => Promise<boolean>
+  loadAll: (onPage?: (songs: Song[]) => void) => Promise<LoadAllResult>
   /**
    * 取**整份**列表（已在手的 + 余下分页），给「全选之后要播放 / 加入队列」那种动作：
    * 那两条要的是 Song 对象，而「全选当前筛选」手上只有 id。
@@ -89,7 +98,7 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
    *   **等这一轮拉完**，再把从那之后新到的歌补给它（见 loadAll 开头）；而那一代已经被
    *   作废（换筛选 / 刷新）时，等它没有意义 —— 得按新的那一份重新起一轮。
    */
-  const restRun = useRef<{ token: number; done: Promise<boolean> } | null>(null)
+  const restRun = useRef<{ token: number; done: Promise<LoadAllResult> } | null>(null)
   /** 上一次请求的条件指纹；与这次相同 → 只因切回本页而重跑，走静默路径 */
   const lastKey = useRef<string | null>(null)
 
@@ -210,43 +219,44 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
    *
    * ★ 与滚动触发的那条走同一个 `load`：并进列表、去重、错误处理只有一份实现。
    *   区别只是这里由一个 while 循环推着走，而那边每滚到底一次推一页。
-   * ★ 收手有三种：筛选条件变了（generation 变了，在途的结果一律作废）、这一页没取成、
-   *   或者这一页**一首新的都没有**（后端在翻页期间增删过，再按同一个 offset 要只会原地打转）。
+   * ★ 收手有三态（见 LoadAllResult）：筛选条件变了（cancelled，不算错）、这一页没取成
+   *   或**一首新的都没有**（failed —— 后端在翻页期间增删过 / 排序平局打转，
+   *   再按同一个 offset 要只会原地转）。
    * ★ 已经有一轮在拉（用户连点了两次「播放全部」）：不另起一轮 —— 等它拉完，再把
    *   **从这一刻起新到的那一段**交给这一轮回调。各自只关心自己没见过的歌，上一轮回调
    *   属于旧队列，不该再往新的里面塞。若那一轮属于已经作废的一代（中途换过筛选 / 刷新过），
    *   等它没有意义：直接按新的一份重新起一轮。
    */
   const loadAll = useCallback(
-    async (onPage?: (songs: Song[]) => void): Promise<boolean> => {
+    async (onPage?: (songs: Song[]) => void): Promise<LoadAllResult> => {
       const token = generation.current
-      /** 这一趟之后是不是真的到底了（取消 / 出错都不算） */
-      const complete = (): boolean =>
-        token === generation.current && songsRef.current.length >= totalRef.current
 
       const running = restRun.current
       if (running && running.token === token) {
         const from = songsRef.current.length
         const done = await running.done
         // 等待期间条件又变了：这一份列表已经不算数，就别再往队列里补
-        if (token !== generation.current) return false
+        if (token !== generation.current) return 'cancelled'
         const tail = songsRef.current.slice(from)
         if (tail.length > 0) onPage?.(tail)
         return done
       }
 
-      const run = (async (): Promise<boolean> => {
+      const run = (async (): Promise<LoadAllResult> => {
         while (token === generation.current && songsRef.current.length < totalRef.current) {
           setLoadingMore(true)
           const before = songsRef.current.length
           const added = await load(before, token)
-          if (token !== generation.current) return false
-          if (!added) return false
+          if (token !== generation.current) return 'cancelled'
+          // 取页失败（网络 / 后端）：真失败，调用方该提示或重试
+          if (!added) return 'failed'
           if (added.length > 0) onPage?.(added)
-          // 后端没再给任何东西：别再按同一个 offset 反复要
-          if (songsRef.current.length <= before) return false
+          // 后端没再给任何东西：别再按同一个 offset 反复要 —— 同样算失败，
+          // 不算完成（队列此刻一定是残缺的，静默返回 complete 会骗过调用方）
+          if (songsRef.current.length <= before) return 'failed'
         }
-        return complete()
+        if (token !== generation.current) return 'cancelled'
+        return songsRef.current.length >= totalRef.current ? 'complete' : 'failed'
       })()
       const entry = { token, done: run }
       restRun.current = entry
@@ -269,8 +279,10 @@ export function useSongList(query: SongQuery, pageSize = 200): SongListControlle
    */
   const fetchAll = useCallback(async (): Promise<Song[]> => {
     const token = generation.current
-    const complete = await loadAll()
-    if (!complete || token !== generation.current) throw new Error('列表没有加载完，请重试')
+    const result = await loadAll()
+    if (result !== 'complete' || token !== generation.current) {
+      throw new Error('列表没有加载完，请重试')
+    }
     return songsRef.current
   }, [loadAll])
 

@@ -34,7 +34,7 @@
  *   3. **批量操作区分「行选中」与「全选当前筛选」**：前者能播能排队，后者只做 id 级动作。
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { FacetField, Song, SongType } from '@shared/types'
 import { FACET_LABELS } from '@shared/types'
@@ -62,6 +62,7 @@ import { useSongList } from '@/hooks/useSongList'
 import { requireClient } from '@/state/useAuth'
 import { usePlayer } from '@/state/usePlayer'
 import { useUi, type NativeRoute } from '@/state/useUi'
+import { toast } from '@/state/useToasts'
 import { FoldersView } from './FoldersView'
 import { LocalFilesView } from './LocalFilesView'
 
@@ -255,9 +256,21 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
    * 「播放全部」这一次后台补队列的世代号（见下面 playAll）。
    *
    * 用户再点一次「播放全部」时，上一轮还在飞的分页就不许再往队列里塞 —— 那会让队列里
-   * 混进上一轮的歌。（换了筛选条件则由 loadAll 自己的 generation 收手，列表与分页一起作废。）
+   * 混进上一轮的歌。
    */
   const playAllSession = useRef(0)
+
+  /**
+   * playAll 续轮时的筛选指纹：拉取期间筛选条件变过 → 那一轮作废。
+   *
+   * loadAll 的 `cancelled` 只认 generation（刷新 / revision 也会顶掉它），**认不出换筛选**：
+   * 换筛选后列表回第一页，紧接着的续轮会拿着新筛选的余下分页往旧队列里塞。队列是
+   * 旧筛选那一趟的，混不得 —— 所以 playAll 记下点击那一刻的 query，续轮前对一遍。
+   */
+  const queryRef = useRef(query)
+  useEffect(() => {
+    queryRef.current = query
+  })
 
   /**
    * 播放全部：**先用手上的这一页起播**，余下的分页由 loadAll 在后台继续拉，
@@ -268,16 +281,34 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
    *   就是这件事，见 components/SongTable）。
    * ★ 追加走 addToQueue 而不是再调一次 playSongs：后者会重建队列与游标，正在放的那一首
    *   会被打断。追加只往后接，播到队尾自然接上新到的那些。
+   * ★ **真正的播放全部 = 整份筛选都要进队列**，所以一轮 `failed`（分页出错 / 后端零新增
+   *   打转 / 扫描结束把列表重置了）不能像从前那样悄悄收场 —— 那正是「只播了已加载那一页」
+   *   的根子。小歇 400ms 再续一轮（loadAll 自己会从当前长度接着拉），同一首不重复接
+   *   （`queued` 按 id 记账，列表被重置后重拉的那批不会二次入队）；最多续 2 次，
+   *   仍不完整才明说，让用户知道队列缺了、以及怎么续上。
+   * ★ 换筛选（query 变了）则整轮作废，静默收手 —— 不是错误，是用户换了个地方看。
    */
   const playAll = useCallback(() => {
     if (list.songs.length === 0) return
     const session = ++playAllSession.current
+    const queryAtStart = query
+    const queued = new Set(list.songs.map((song) => song.id))
     void playSongs(list.songs, 0, playContext)
-    void list.loadAll((added) => {
-      if (session !== playAllSession.current) return
-      addToQueue(added)
-    })
-  }, [list, playSongs, addToQueue, playContext])
+    void (async () => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const result = await list.loadAll((added) => {
+          if (session !== playAllSession.current || queryRef.current !== queryAtStart) return
+          const fresh = added.filter((song) => !queued.has(song.id))
+          for (const song of fresh) queued.add(song.id)
+          if (fresh.length > 0) addToQueue(fresh)
+        })
+        if (session !== playAllSession.current || queryRef.current !== queryAtStart) return
+        if (result !== 'failed') return
+        await new Promise((resolve) => setTimeout(resolve, 400))
+      }
+      toast('剩余歌曲没有加载完，队列可能不完整 —— 可再点一次「播放全部」继续', 'error')
+    })()
+  }, [list, playSongs, addToQueue, playContext, query])
 
   /** 报给页头那行副标题（跟着标题走，见 components/LibraryHeader） */
   const subtitle =
