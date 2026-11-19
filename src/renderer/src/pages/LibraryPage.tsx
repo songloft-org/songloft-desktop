@@ -187,6 +187,13 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
   }, [])
 
   const handleSelectAll = useCallback(async () => {
+    /*
+     * 乐观置位：空数组表示「全选已请求、id 列表还在路上」。此刻操作条就得按全选口径行动 ——
+     * 第二下 Ctrl+A 的成功提示是立刻弹的，用户随即点播放：若等 id 落地才置位，这一下会被
+     * 当成行选中，只播已加载的那一页、且永远不会补齐（全选后「播放全部只放出 200 首」的
+     * 根因正是这个竞态）。
+     */
+    setSelectAllIds([])
     try {
       const ids = await list.fetchAllIds()
       setSelectAllIds(ids)
@@ -196,7 +203,8 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
        */
       setSelection(list.songs.map((_, index) => index))
     } catch {
-      /* fetchAllIds 内部已经把错误暴露在 list.error 上，这里不需要额外提示 */
+      // 收回乐观置位：回到行选中，别让「已选中全部 N 首」挂着一个永远不会补齐的队列
+      setSelectAllIds(null)
     }
   }, [list])
 
@@ -556,14 +564,15 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
         全选改由 `Ctrl/⌘+A` 承担（见 hooks/useSelectAllShortcut），列表底部只交代「还有没有
         更多」，不再摆一颗与当前进度无关的按钮。
       */}
-      {shouldShowSelectionBar(selectAllIds?.length ?? selection.length) ? (
+      {/* 全选模式下（含 id 还没落地的哨兵窗口）按筛选总数判断，否则按选中行数 */}
+      {shouldShowSelectionBar(selectAllIds ? list.total : selection.length) ? (
         <SelectionBar
           ids={totalForBar}
           songs={selectedSongs}
           /* 「全选当前筛选」手上只有 id：播放 / 入队前先把整份列表补齐（见 SelectionBar） */
           loadSongs={list.fetchAll}
           selectAll={Boolean(selectAllIds)}
-          selectAllTotal={selectAllIds?.length}
+          selectAllTotal={list.total}
           onClear={clearSelection}
           onRemoved={(ids) => {
             list.removeSongs(ids)

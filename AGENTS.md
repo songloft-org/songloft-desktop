@@ -180,7 +180,11 @@ src/
    │                 PlayerBar / LyricsView / CommandPalette /
    │                 Panel / ContextMenu / Modal / Toasts /
    │                 SelectionBar（多选操作条：手上有歌就先播 / 先入队，全选模式下余下的
-   │                 由 loadSongs 在后台补齐后接在队尾 —— 播放不等整份列表就位）/
+   │                 由 loadSongs 在后台补齐后接在队尾 —— 播放不等整份列表就位。
+   │                 ★ 全选的 id 在路上时各页用**空数组哨兵**乐观置位 selectAllIds，
+   │                 此刻操作条就得按全选口径行动，否则「提示已全选 → 立刻点播放」
+   │                 会被当成行选中只播已加载的那一页且永不补齐）/
+
    │                 PendingUpdateModal（上次下载好的安装包，启动时问一句要不要装，见 §8.21）/
    │                 Overlay（弹层骨架：定位层 + 遮罩，Modal 与命令面板共用，见 §8.22）/
    │                 FullPlayer（满窗播放：盖在原生面上的浮层）/

@@ -12,6 +12,12 @@
  *     「正在加载更多歌曲…」与副标题的「已加载 N」交代。
  *   * 只有 id、**连一首都没到手**（列表还没出第一页）→ 只能等一轮：按 ids 补齐后再执行，
  *     期间按钮显示「正在加载…」，且不许重复触发；失败弹出原因让用户重试。
+ *
+ * ★ 全选还有一个**落地前的窗口**：`ids` 为空数组表示「全选已请求、id 列表还在路上」
+ *   （页面在发起 `/songs/ids` 那一刻就乐观置位，见各页 handleSelectAll）。这一态与
+ *   「已选 0 首」不同：`selectAllTotal` 给出的是筛选总数，条上照写「已选中全部 N 首」，
+ *   播放 / 入队照走上面那条「先播手上这批、余下后台补齐」的路 —— 否则用户看到成功提示
+ *   就点播放，会被当成行选中只播已加载的那一页、且永远不会补齐。
  */
 
 import { useRef, useState } from 'react'
@@ -67,9 +73,12 @@ export interface SelectionBarProps {
   playlistId?: number
   /** 移除 / 删除成功后通知调用方就地把行去掉 */
   onRemoved?: (ids: number[]) => void
-  /** 是否是「全选当前筛选」模式（决定文案） */
+  /** 是否是「全选当前筛选」模式（决定文案）。id 还没落地（空数组哨兵）也算 */
   selectAll?: boolean
-  /** 全选模式下实际的筛选总数 */
+  /**
+   * 全选模式下实际的筛选总数（就是列表 hook 的 `total`，不要用 `ids.length` 冒充 ——
+   * id 还没落地时它是 0，条数与「后台补齐剩余 N 首」就全错了）。
+   */
   selectAllTotal?: number
 }
 
@@ -160,6 +169,9 @@ export function SelectionBar({
    *   会被打断 —— 而这个函数存在的意义正是「播放不受影响」。
    * ★ 只补**没播过**的那些（按 id 比）：`loadSongs` 回来的是整份筛选结果，手上这批
    *   已经在队列里了，重复塞进去会让同一首歌排两遍。
+   * ★ 只有 ids 确实覆盖了宣称的全选范围时才按它收缩：全选刚请求、id 还没落地时 ids
+   *   是空数组（乐观置位的哨兵，见文件头），此时该按「整份筛选 − 已播」补齐 —— 按
+   *   空集收缩会把 rest 收成 0，补齐就整个失效了。
    * ★ 失败只提示、不回滚：已经播起来的那批是有效的，用户顶多没拿到后面那些。
    */
   const fillRest = async (played: Song[]): Promise<void> => {
@@ -170,7 +182,10 @@ export function SelectionBar({
     try {
       const all = await loadSongs()
       const wanted = new Set(ids)
-      const rest = all.filter((song) => wanted.has(song.id) && !playedIds.has(song.id))
+      const idsComplete = ids.length >= count
+      const rest = all.filter(
+        (song) => !playedIds.has(song.id) && (!idsComplete || wanted.has(song.id))
+      )
       if (rest.length === 0) return
       addToQueue(rest)
       toast(`其余 ${rest.length} 首已接在播放队列后面`, 'success')
@@ -208,10 +223,13 @@ export function SelectionBar({
       /*
        * 走「补齐」这条路时按 `ids` 过一遍：列表拉回来的是**整份筛选结果**，而这一条操作
        * 只该对**选中的那些**生效（两者通常一样，但筛选结果在拉开期间可能已经变过）。
+       * 例外与 fillRest 同一条：ids 还没落地（空数组哨兵）时不过收缩 —— 那时选中的
+       * 就是整份筛选本身。
        */
       const all = await loadSongs()
       const wanted = new Set(ids)
-      const list = all.filter((song) => wanted.has(song.id))
+      const idsComplete = ids.length >= count
+      const list = idsComplete ? all.filter((song) => wanted.has(song.id)) : all
       if (list.length === 0) {
         toast('没有可播放的歌曲', 'error')
         return

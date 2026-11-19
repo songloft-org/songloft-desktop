@@ -134,6 +134,9 @@ export function PlaylistDetailPage({ playlistId }: { playlistId: number }): Reac
       setSelectAllIds(null)
     },
     onSelectAllIds: () => {
+      // 乐观置位（空数组 = 全选已请求、id 在路上）：操作条必须立刻按全选口径行动，
+      // 否则用户看到提示就点播放，会被当成行选中只播已加载的那部分（见 SelectionBar 文件头）
+      setSelectAllIds([])
       void list
         .fetchAllIds()
         .then((ids) => {
@@ -141,7 +144,9 @@ export function PlaylistDetailPage({ playlistId }: { playlistId: number }): Reac
           // 已经在手的那些行也标成选中（否则屏幕上一条高亮都没有，看着像没生效）
           setSelection(list.songs.map((_, index) => index))
         })
-        .catch(() => undefined)
+        .catch(() => {
+          setSelectAllIds(null)
+        })
     }
   })
 
@@ -511,7 +516,8 @@ export function PlaylistDetailPage({ playlistId }: { playlistId: number }): Reac
 
       {/* 表尾那颗「全选（N 首）」已并入 Ctrl/⌘+A（见 hooks/useSelectAllShortcut） */}
 
-      {shouldShowSelectionBar(selectAllIds?.length ?? selection.length) ? (
+      {/* 全选模式下（含 id 还没落地的哨兵窗口）按筛选总数判断，否则按选中行数 */}
+      {shouldShowSelectionBar(selectAllIds ? list.total : selection.length) ? (
         <SelectionBar
           ids={
             selectAllIds ??
@@ -521,7 +527,7 @@ export function PlaylistDetailPage({ playlistId }: { playlistId: number }): Reac
           /* 「全选」手上只有 id：播放 / 入队前先把整份列表补齐（见 SelectionBar） */
           loadSongs={list.fetchAll}
           selectAll={Boolean(selectAllIds)}
-          selectAllTotal={selectAllIds?.length}
+          selectAllTotal={list.total}
           playlistId={playlistId}
           onClear={clearSelection}
           onRemoved={(ids) => {
