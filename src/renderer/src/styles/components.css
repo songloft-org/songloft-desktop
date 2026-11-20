@@ -406,6 +406,16 @@
   color: var(--text-2);
 }
 
+/*
+ * 加入时间：次要信息，用原来「时长」那一档的淡色（--text-4）。
+ * 列序见 SongTable 的 LIBRARY_COLUMNS —— 时长排在它前面。
+ */
+.song-added {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-4);
+}
+
 .song-title {
   font-size: 13.5px;
   color: var(--text-1);
@@ -433,7 +443,8 @@
 .song-duration {
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
-  color: var(--text-4);
+  /* 与列表其他文字同色（--text-2）：时长是选歌时要看的主信息，不该比加入时间更淡 */
+  color: var(--text-2);
   text-align: right;
 }
 

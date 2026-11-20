@@ -69,9 +69,20 @@ const ALBUM: SongColumn = {
   width: 'minmax(110px, 1.4fr)',
   sortField: 'album'
 }
-const ADDED: SongColumn = { key: 'added', label: '加入时间', width: '104px', sortField: 'added_at' }
+/* 加入时间右对齐：它跟右对齐的时长是相邻两列，左对齐会几乎贴着时长的尾端 */
+const ADDED: SongColumn = {
+  key: 'added',
+  label: '加入时间',
+  width: '104px',
+  sortField: 'added_at',
+  align: 'right'
+}
 
-export const LIBRARY_COLUMNS: SongColumn[] = [INDEX, TITLE, ARTIST, ALBUM, ADDED, DURATION, ACTIONS]
+/*
+ * 时长排在加入时间前面：听歌时「这首多长」远比「什么时候加进来的」重要 ——
+ * 前者影响点不点，后者只是历史记录，靠后放。
+ */
+export const LIBRARY_COLUMNS: SongColumn[] = [INDEX, TITLE, ARTIST, ALBUM, DURATION, ADDED, ACTIONS]
 export const PLAYLIST_COLUMNS: SongColumn[] = [INDEX, TITLE, ARTIST, ALBUM, DURATION, ACTIONS]
 export const COMPACT_COLUMNS: SongColumn[] = [INDEX, TITLE, ARTIST, DURATION, ACTIONS]
 
@@ -504,11 +515,7 @@ function SongRow({
       case 'album':
         return <div className="song-cell truncate">{displayAlbum(song.album)}</div>
       case 'added':
-        return (
-          <div className="song-cell truncate" style={{ fontSize: 12 }}>
-            {formatRelative(song.added_at)}
-          </div>
-        )
+        return <div className="song-cell song-added truncate">{formatRelative(song.added_at)}</div>
       case 'duration':
         return (
           <div className="song-duration">
