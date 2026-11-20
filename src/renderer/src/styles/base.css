@@ -458,6 +458,10 @@ html[data-mini='true'] .mini-player {
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  /* 曲库右下角那颗悬浮钮的定位基准（见 components.css 的 .locate-current-btn）：
+     它是这一栏（不滚动）的 absolute 子元素，因此列表怎么滚都钉在右下角；这一栏
+     随抽屉开合收窄时，钮也按同一条栅格过渡一起走。 */
+  position: relative;
 }
 
 /* 主内容区：每页一个槽，全叠在同一个格子里（同时只有一个是"看得见的那一页"）。

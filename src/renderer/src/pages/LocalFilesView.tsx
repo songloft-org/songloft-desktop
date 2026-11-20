@@ -17,11 +17,13 @@
  *   （共用 .song-table / .song-row 那套样式，观感仍然是一张表）。
  */
 
-import { useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { IconFolderOpen, IconPause, IconPlay, IconServer, IconTrash } from '@/components/Icons'
 import { LibraryHeader } from '@/components/LibraryHeader'
+import { LocateCurrentButton } from '@/components/LocateCurrentButton'
 import { EmptyState } from '@/components/primitives'
+import { scrollRowToCenterIfHidden } from '@/lib/scroll'
 import { useAuth } from '@/state/useAuth'
 import { useLocalFiles, playLocalFileAt, pickLocalFiles } from '@/state/useLocalFiles'
 import { usePlayer } from '@/state/usePlayer'
@@ -41,6 +43,17 @@ export function LocalFilesView(): React.JSX.Element {
   )
   const playing = usePlayer((s) => s.playing)
   const toggle = usePlayer((s) => s.toggle)
+  /** 当前曲在这一份本地文件列表里的下标；-1 = 没在播或播的不是这里的文件 */
+  const currentIndex = useMemo(
+    () => (currentId == null ? -1 : songs.findIndex((s) => s.id === currentId)),
+    [songs, currentId]
+  )
+  const tableRef = useRef<HTMLDivElement>(null)
+  /** 这一份表没有窗口化，当前行一定挂在 DOM 里（见上面的 currentIndex） */
+  const locateCurrent = useCallback(() => {
+    const row = tableRef.current?.querySelector<HTMLElement>('[data-current="true"]') ?? null
+    scrollRowToCenterIfHidden(row)
+  }, [])
   /** 文件框开着的时候把按钮按下去 —— 挑大文件/多选时对话框可能停一会儿 */
   const [picking, setPicking] = useState(false)
 
@@ -129,7 +142,7 @@ export function LocalFilesView(): React.JSX.Element {
           }
         />
       ) : (
-        <div className="song-table">
+        <div className="song-table" ref={tableRef}>
           <div className="song-head" style={{ gridTemplateColumns: GRID }}>
             <div>#</div>
             <div>文件</div>
@@ -194,6 +207,8 @@ export function LocalFilesView(): React.JSX.Element {
           })}
         </div>
       )}
+
+      {currentIndex >= 0 ? <LocateCurrentButton onClick={locateCurrent} /> : null}
     </>
   )
 }

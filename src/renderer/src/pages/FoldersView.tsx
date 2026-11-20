@@ -164,6 +164,7 @@ export function FoldersView({ path }: { path: string }): React.JSX.Element {
       <SongTable
         songs={songs}
         columns={LIBRARY_COLUMNS}
+        showLocateButton
         loading={result.loading}
         onPlayAt={(index) => void playSongs(songs, index, { type: 'folder', key: path || '/' })}
         selection={selection}

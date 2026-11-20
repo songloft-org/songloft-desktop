@@ -1136,8 +1136,9 @@ NSIS 是静默重跑安装器，任何一步半路失败，用户手上就剩一
 * 不要在 DOM 元素上写 `title=` 当提示：那是浏览器自带的黑框，配色不跟主题、出现时机也不受控。
   一律写 `data-tip="…"`，由 `components/Tooltip.tsx` 的全局浮层统一显示（图标按钮仍要留
   `aria-label`，浮层是 `aria-hidden` 的，不承担可访问名）。浮层跟着指针走（起在指针右下方，
-  放不下就翻到另一侧，四边再夹进视口），所以没有「按元素挑方位」这一档，也就不存在
-  `data-tip-place` 之类的方位属性。
+  放不下就翻到另一侧，四边再夹进视口），通常**不要**按元素挑方位。唯一例外是贴着窗口底边的
+  `locate-current-btn`：它默认会落到播放条上，所以用 `data-tip-place="top-left"` 强制翻到
+  指针左上方（见 Tooltip.tsx 的 placeTip）。
 * 不要把 `build/` 当运行期资源目录。
 * 不要在 `shared/` 里引入副作用或 electron 依赖。
 * 不要为了让 `format:check` 通过而给文件加 `prettier-ignore` —— 直接跑 `pnpm run format`。

@@ -11,15 +11,15 @@
  *   * 歌单上下文下支持拖拽重排（onReorder）
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { Song, SongSortField } from '@shared/types'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
 import { openMenuFromEvent, type MenuItem } from './ContextMenu'
 import { IconGrip, IconHeart, IconLoader, IconMore, IconPause, IconPlay } from './Icons'
+import { LocateCurrentButton } from './LocateCurrentButton'
 import { Cover, EmptyState, InfiniteSentinel, SongRowsSkeleton } from './primitives'
 import { buildSongMenuItems, type SongMenuOptions } from './songMenu'
-import { usePageActive } from '@/hooks/usePageActive'
 import { useRowWindow } from '@/hooks/useRowWindow'
 import { SONGS_DRAG_TYPE } from '@/lib/dnd'
 import { displayAlbum, displayArtist, formatDuration, formatRelative } from '@/lib/format'
@@ -115,6 +115,11 @@ export interface SongTableProps {
   emptyAction?: React.ReactNode
   /** 额外的行右键项（追加在标准项之后） */
   extraMenuItems?: (song: Song) => MenuItem[]
+  /**
+   * 曲库那几种列表专用：右下角摆一颗「定位正在播放」的悬浮钮。
+   * 歌单 / 收藏 / 搜索那些表不摆 —— 定位是「在这份曲库里找当前曲」，不是通用能力。
+   */
+  showLocateButton?: boolean
 }
 
 export function SongTable({
@@ -135,7 +140,8 @@ export function SongTable({
   emptyTitle = '这里还没有歌曲',
   emptyDescription,
   emptyAction,
-  extraMenuItems
+  extraMenuItems,
+  showLocateButton = false
 }: SongTableProps): React.JSX.Element {
   const currentSongId = usePlayer((s) =>
     s.cursor >= 0 && s.cursor < s.order.length ? (s.queue[s.order[s.cursor]]?.id ?? null) : null
@@ -228,7 +234,7 @@ export function SongTable({
    *   · 列表为空（歌单空 / 还在加载）；
    *   · 播的是别处来的歌（播放源不是这张列表）；
    *   · 歌已经被移出这张列表（右键「从歌单移除」/ 服务端刷新掉了）。
-   * 此时既不滚、也不高亮任何一行，界面回到「这一页只是一份列表」的状态。
+   * 此时不高亮任何一行，右下角的定位钮也不摆，界面回到「这一页只是一份列表」的状态。
    *
    * ★ 用 id 找而不是拿播放队列的下标去对：队列顺序（含随机）与列表顺序是两回事，
    *   同一首歌在一张歌单里还可能出现两次 —— 那种情况下定位到**第一个**出现的位置。
@@ -239,30 +245,20 @@ export function SongTable({
   )
 
   /*
-   * 当前曲**看不见**的时候，把它摆到列表中间。
+   * 定位当前曲：**只由用户点那颗悬浮钮触发**，切页 / 换曲 / 列表变化都不再自动滚。
+   * 页面槽常驻，切走再切回来时滚动位置本来就还在 —— 每一次切回来都重新居中，等于把
+   * 用户翻到的那一段扔掉。想找当前曲时点右下角那颗钮即可。
    *
-   * ★ 「看不见才动」是这条规则的要点：切走再切回来时，这一页的滚动位置本来就还在
-   *   （页面槽常驻，见 App 的 PageSlot）；当前曲还在那一屏里，就一个字都别改 ——
-   *   用户回来看的正是他离开时那一屏。反过来，每切回来一次都重新居中，等于把他翻到
-   *   的那一段扔掉。
-   * ★ 要动的时候是**居中**，不是「推回边缘」：贴着上/下边缘的那一下同样像跳，而且
-   *   刚被推到边缘的那一行，上下文只剩一半。
-   * ★ 为什么不是只在挂载时跑一次：页面不会重新挂载（页面槽常驻），所以靠 `pageActive`
-   *   （这一页现在看不看得见）与 `currentIndex`（换曲）驱动。
-   * ★ 依赖里**没有** songs 本身：列表内容变了但当前曲的相对位置没变时（在歌单内筛选、
-   *   搜索框改一个字母）不该再滚一次 —— 那会把用户刚看上的一屏又拽走。
-   * ★ 首尾的夹取在 lib/scroll.ts 里：滚到 0 或滚到底就停，不会为了「居中」拉出空白。
+   * ★ 行已经挂出来就量它自己；被虚拟化移出窗口时按几何滚过去（centerRow），下一帧
+   *   它就会被挂出来。两条路都是平滑滚动，首尾夹取在 lib/scroll.ts 里。
    */
-  const pageActive = usePageActive()
-  /** 窗口化之后这里要调用它（centerRow 的 identity 跟着行高变） */
   const centerRow = rowWindow.centerRow
-  useEffect(() => {
-    if (!pageActive || currentIndex < 0) return
+  const locateCurrent = useCallback(() => {
+    if (currentIndex < 0) return
     const row = tableRef.current?.querySelector<HTMLElement>(`[data-song-index="${currentIndex}"]`)
-    // 那一行可能还不在窗口里（窗口化之后这是常态）：按几何滚过去，下一帧它就会被挂出来
     if (row) scrollRowToCenterIfHidden(row)
     else centerRow(currentIndex)
-  }, [pageActive, currentIndex, centerRow, tableRef])
+  }, [centerRow, currentIndex, tableRef])
 
   if (loading && songs.length === 0) {
     return (
@@ -418,6 +414,10 @@ export function SongTable({
       {hasMore && onLoadMore ? (
         <InfiniteSentinel onVisible={onLoadMore} disabled={!hasMore || loadingMore} />
       ) : null}
+
+      {showLocateButton && currentIndex >= 0 ? (
+        <LocateCurrentButton onClick={locateCurrent} />
+      ) : null}
     </div>
   )
 }
@@ -521,8 +521,8 @@ function SongRow({
   }
 
   /*
-   * data-song-index：当前曲定位靠它找行（见 SongTable 里那段 effect）。用**行下标**而
-   * 不是歌 id —— 同一首歌在一张歌单里出现两次时，id 认不出是哪一行。
+   * data-song-index：右下角那颗定位钮靠它找行（见 SongTable 的 locateCurrent）。用**行下标**
+   * 而不是歌 id —— 同一首歌在一张歌单里出现两次时，id 认不出是哪一行。
    */
   return (
     <div

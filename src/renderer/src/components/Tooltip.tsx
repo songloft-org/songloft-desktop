@@ -15,11 +15,12 @@
  *    停留时长、配色都不受应用控制，在浅色主题下尤其突兀。）
  *
  * 3. **跟着指针走，不贴在被提示元素上。**
- *    贴元素那套要按可用空间挑方位（原先有上下左右四个候选、一套 fitsAt/placeAt，还要为
- *    折叠侧栏单开一个 `data-tip-place="right"`）—— 而「往哪边弹」这件事，指针位置本身就
- *    知道：默认右下方，放不下翻到另一侧，四边夹进视口。更实际的理由是**不遮住要看的东西**：
- *    提示多数挂在某一行上，而那一行正是用户在看的内容，一块三百多像素宽的浮层贴在它旁边
- *    （尤其是插件管理那种五行信息的提示）会正好盖住它。
+ *    贴元素那套要按可用空间挑方位（原先有上下左右四个候选、一套 fitsAt/placeAt）—— 而
+ *    「往哪边弹」这件事，指针位置本身就知道：默认右下方，放不下翻到另一侧，四边夹进视口。
+ *    唯一保留的方位覆盖是 `data-tip-place="top-left"`：曲库右下角那颗定位钮贴着窗口底边，
+ *    默认会落到播放条上，所以强制翻到指针左上方（见 placeTip）。
+ *    更实际的理由是**不遮住要看的东西**：提示多数挂在某一行上，而那一行正是用户在看的内容，
+ *    一块三百多像素宽的浮层贴在它旁边（尤其是插件管理那种五行信息的提示）会正好盖住它。
  *
  *    ★ 例外是 `flashTip` 那条**一次性提示**（键盘动作的回执，见那里的说明）：它没有锚点、
  *      触发时指针可能根本不在窗口里，所以固定落在**窗口正中**，不跟指针。
@@ -33,6 +34,13 @@ import { create } from 'zustand'
 
 /** 提示文案写在这个属性上：`<button data-tip="收起面板">` */
 export const TIP_ATTR = 'data-tip'
+/**
+ * 强制把提示摆到指针的左上方（`data-tip-place="top-left"`）。
+ *
+ * 默认那套「右下，放不下再翻」对绝大多数元素都够用，但右下角那颗定位钮例外：
+ * 它贴着窗口底边，提示照默认会落在播放条上。只给这一颗钮开口子，不动全局规则。
+ */
+export const TIP_PLACE_ATTR = 'data-tip-place'
 /** 提示框与指针之间的间隙 */
 const POINTER_GAP = 16
 /** 与视口边缘至少留出来的空隙 */
@@ -136,14 +144,18 @@ let tipElement: HTMLElement | null = null
  * 浮层要摆到哪儿。
  *
  * 默认是**指针的右下方**，右边或下边装不下就翻到另一侧；四边都按「与视口至少留 MARGIN」
- * 夹一下 —— 指针贴着窗口边缘时，宁可压着指针也别把浮层推出屏幕。
+ * 夹一下 —— 指针贴着窗口边缘时，宁可压着指针也别把浮层推出屏幕。锚点显式写了
+ * `data-tip-place="top-left"` 时（曲库右下角那颗定位钮）强制翻到左上方，免得压在播放条上。
  *
  * ★ 位置与显形都是**直接写 DOM**，不走 React state：指针每秒动上百次，走 state 就是每帧
  *   重渲染一次这个浮层。React 那边只管文本，位置由这里独家负责（初始不可见写在 .tip 里）。
  */
 function placeTip(element: HTMLElement): void {
-  const flipX = pointer.x + POINTER_GAP + element.offsetWidth > window.innerWidth - MARGIN
-  const flipY = pointer.y + POINTER_GAP + element.offsetHeight > window.innerHeight - MARGIN
+  const forcedTopLeft = useTooltip.getState().anchor?.getAttribute(TIP_PLACE_ATTR) === 'top-left'
+  const flipX =
+    forcedTopLeft || pointer.x + POINTER_GAP + element.offsetWidth > window.innerWidth - MARGIN
+  const flipY =
+    forcedTopLeft || pointer.y + POINTER_GAP + element.offsetHeight > window.innerHeight - MARGIN
   const left = flipX ? pointer.x - POINTER_GAP - element.offsetWidth : pointer.x + POINTER_GAP
   const top = flipY ? pointer.y - POINTER_GAP - element.offsetHeight : pointer.y + POINTER_GAP
 

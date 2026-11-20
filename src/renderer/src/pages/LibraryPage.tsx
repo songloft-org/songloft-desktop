@@ -555,6 +555,7 @@ function LibraryView({ fixedType }: { fixedType?: SongType }): React.JSX.Element
       <SongTable
         songs={list.songs}
         columns={LIBRARY_COLUMNS}
+        showLocateButton
         loading={list.loading}
         sort={sort}
         onSortChange={setSort}

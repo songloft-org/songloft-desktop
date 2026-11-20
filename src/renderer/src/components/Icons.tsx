@@ -473,6 +473,15 @@ export const IconSparkle = (p: IconProps) => (
   </Svg>
 )
 
+/** 定位到当前播放曲：准星（四段瞄准线 + 中心点），用在曲库右下角的悬浮钮上 */
+export const IconLocate = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="6.6" />
+    <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" />
+    <path d="M12 2.6v3.1M12 18.3v3.1M2.6 12h3.1M18.3 12h3.1" />
+  </Svg>
+)
+
 /** 指纹：重复歌曲检测的主按钮用它交代「靠什么认出来的」 */
 export const IconFingerprint = (p: IconProps) => (
   <Svg {...p}>

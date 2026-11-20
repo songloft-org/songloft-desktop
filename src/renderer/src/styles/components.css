@@ -663,6 +663,50 @@
   box-shadow: var(--shadow-2);
 }
 
+/* ── 曲库右下角：定位正在播放 ─────────────────────────────────────────── */
+
+/*
+ * 锚在不滚动的主内容栏上（见 LocateCurrentButton）：absolute 相对这一栏的可视盒，
+ * 列表怎么滚都钉在右下角，也不按视口算 —— 抽屉开合时这一栏收窄，钮按同一条栅格
+ * 过渡跟着走。只有这颗 36px 的圆钮接事件，底下的列表与播放条照常可点。
+ */
+.locate-current-btn {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--accent-line);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg-2) 92%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-2);
+  color: var(--accent);
+  cursor: pointer;
+  transition:
+    background var(--dur-2) var(--ease),
+    transform var(--dur-2) var(--ease);
+}
+
+.locate-current-btn:hover {
+  background: var(--accent-soft);
+  transform: translateY(-2px);
+}
+
+.locate-current-btn:active {
+  transform: translateY(0) scale(0.95);
+}
+
+/* 多选时贴列表底的 .selection-bar 占住这一块：让位，别压住它右端的动作钮。
+   只看**当前可见**的那个槽 —— 别的页留着选中条不该藏掉这一页的钮。 */
+.main-column:has(.page-slot:not([data-hidden]) .selection-bar) .locate-current-btn {
+  display: none;
+}
+
 /*
  * 勾选框。平时藏着 —— 卡片上再常驻一枚框会把封面弄脏；悬停、已勾选、或已经进了多选
  * 模式时才现形。底色刻意用半透明的深色 + 描边：它常压在封面上，纯色底要么被浅封面吃掉，
