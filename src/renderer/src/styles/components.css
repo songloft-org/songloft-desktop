@@ -1627,13 +1627,14 @@ html[data-mini='true'] :focus-visible {
   }
 }
 
-/* 队列那一份的滚动容器。
-   歌词不用它 —— LyricsView 里的 .lyrics 自带 flex: 1 与 overflow-y: auto；
-   Queue 则是「谁挂它谁给滚动容器」（抽屉那边给的是 .panel-body），这里就照那份写。 */
+/* 队列那一份的区域：只负责撑满面板，滚动由 Queue 内部的 .queue-rows 承担。
+   歌词不用它 —— LyricsView 里的 .lyrics 自带 flex: 1 与 overflow-y: auto。 */
 .mini-queue {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 /*
@@ -2374,34 +2375,15 @@ html[data-mini='true'] :focus-visible {
   border-left: 1px solid var(--line-1);
 }
 
-.panel-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 10px 0 16px;
-  border-bottom: 1px solid var(--line-1);
-  flex: none;
-}
-
-/* 面板头的分组按钮推到右边，左侧只留「收起面板」。
-   收起的语义是把这块整个移走，跟「在面板内部换页」不是一类操作，分开摆不易点错。 */
-.panel-head .row {
-  justify-content: flex-end;
-}
-
-.panel-title {
-  font-size: 12.5px;
-  font-weight: 640;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
+/* 抽屉没有标题栏：切 tab / 开合统一在播放条那两颗钮上（见 Panel.tsx 文件头） */
 
 .panel-body {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
+  /* 两个 tab 都自己管滚动：队列是 .queue-rows，正在播放是 .lyrics */
+  overflow: hidden;
 }
 
 /* 正在播放 */
@@ -2640,6 +2622,61 @@ html[data-mini='true'] .lyric-line[data-active='true'] .lyric-main {
 }
 
 /* 播放队列 */
+
+/*
+ * 整个队列：摘要与滚动列表是**并列的 flex 兄弟**，不是叠在一起的两层。
+ * 摘要常驻在上方，行只在 .queue-rows 里滚 —— 于是透明面板下行不可能从摘要背后穿过去，
+ * 也不需要给摘要铺底色去挡（那会和面板自己的底色叠成两倍浓度）。
+ */
+.queue {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.queue-summary {
+  flex: none;
+  padding: 12px 16px 8px;
+  background: color-mix(in srgb, var(--bg-1) 92%, transparent);
+  backdrop-filter: blur(16px);
+  font-size: 12px;
+  color: var(--text-4);
+}
+
+/* 行只在这一块里滚；它的上边界就是摘要的下边界 */
+.queue-rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 清空就是这一行里的一个词，不该因为是按钮就变大、变粗、变亮 */
+.queue-summary .queue-clear {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+}
+
+.queue-summary .queue-clear:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-2);
+}
+
+/*
+ * 迷你窗里摘要彻底透明：.mini-panel 自己已经铺了 --mini-panel-tint（滑块改的就是它），
+ * 摘要再铺任何底色都会叠成两倍浓度；现在它和行是并列的两块，也不需要靠底色挡穿透。
+ * 文字在 .mini-panel 里已压成实色，不会跟着糊。
+ */
+.mini-panel .queue-summary {
+  background: transparent;
+  backdrop-filter: none;
+}
+
 .queue-item {
   display: grid;
   grid-template-columns: 24px 38px minmax(0, 1fr) auto;
@@ -2669,6 +2706,12 @@ html[data-mini='true'] .lyric-line[data-active='true'] .lyric-main {
   color: var(--text-4);
   display: grid;
   place-items: center;
+}
+
+/* 队列序号：与歌曲表同一套数字口径（等宽数字，滚动 / 拖动时不跳） */
+.queue-index {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .queue-item[data-dragging='true'] {

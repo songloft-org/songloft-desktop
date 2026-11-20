@@ -209,7 +209,7 @@ window.__t = {
   },
   /** 记下抽屉此刻的滚动位置再收起它（下一步重开时用它判断「有没有原地不动」） */
   closeQueueAndMark: () => {
-    const body = document.querySelector('.panel-body');
+    const body = document.querySelector('.queue-rows');
     window.__markQueueScroll = body ? body.scrollTop : null;
     const el = vis('.playerbar button[aria-label="播放队列"]')[0];
     if (!el) return 'NOT_FOUND';
@@ -428,7 +428,7 @@ window.__t = {
     })(),
     /** 队列抽屉里当前项的中心离滚动区中心多少 px（-1 = 没有当前项 / 抽屉关着） */
     queueCurrentOffset: (() => {
-      const body = document.querySelector('.panel-body');
+      const body = document.querySelector('.queue-rows');
       const item = document.querySelector('.queue-item[data-current="true"]');
       if (!body || !item) return -1;
       const b = body.getBoundingClientRect();
@@ -443,7 +443,7 @@ window.__t = {
      *   真正滚了一趟的话差的是几百甚至上千像素。
      */
     queueScrollKept: (() => {
-      const body = document.querySelector('.panel-body');
+      const body = document.querySelector('.queue-rows');
       if (!body || window.__markQueueScroll == null) return null;
       return Math.abs(body.scrollTop - window.__markQueueScroll) < 40;
     })(),
@@ -469,7 +469,7 @@ window.__t = {
      *   实测踩过 —— 目标算到可滚底部之外，被引擎夹到最底，当前项落在视口上方 4014px。
      */
     queueCurrentInView: (() => {
-      const body = document.querySelector('.panel-body');
+      const body = document.querySelector('.queue-rows');
       const item = document.querySelector('.queue-item[data-current="true"]');
       if (!body || !item) return null;
       const b = body.getBoundingClientRect();
@@ -1801,7 +1801,7 @@ const STEPS = [
   ],
   /*
    * 收起再打开：位置必须原地不动。
-   * ★ 抽屉关掉时整块卸载（.panel-body 跟着消失），滚动位置不会自己留着 —— 组件里得记。
+   * ★ 抽屉关掉时整块卸载（.queue-rows 跟着消失），滚动位置不会自己留着 —— 组件里得记。
    *   这一条正是「别每次打开都重新滚一遍」。
    */
   ['82-queue-close', 'window.__t.closeQueueAndMark()', 1400, { panel: exactly(0) }],

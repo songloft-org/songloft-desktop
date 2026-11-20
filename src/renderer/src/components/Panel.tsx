@@ -3,70 +3,31 @@
  *
  * 做成常驻抽屉而不是独立路由页（Flutter 端「播放器」是一个整页路由）：
  * 桌面宽屏下用户往往想边看曲库边看歌词，切换整页会丢掉列表滚动位置。
+ *
+ * ★ 抽屉里**没有标题栏**（收起 / 两个 tab 那一整条拿掉了）：切 tab 与开合统一走
+ *   播放条那两颗钮（同一 tab 再点一次即收起），抽屉里再摆一条等于两套入口。
  */
 
 import { useEffect, useRef, useState } from 'react'
 
-import { IconChevronRight, IconListMusic, IconMusic, IconQueue, IconTrash } from './Icons'
+import { IconListMusic, IconMusic, IconTrash } from './Icons'
 import { Cover, EmptyState } from './primitives'
 import { LyricsView } from './LyricsView'
 import { openMenuFromEvent } from './ContextMenu'
 import { buildSongMenuItems } from './songMenu'
 import { fallbackTitle, songCoverUrl } from '@shared/metadata'
 import { displayArtist, formatDuration } from '@/lib/format'
-import { findScrollParent, scrollRowToCenterIfHidden, scrollRowToSlot } from '@/lib/scroll'
+import { scrollRowToCenterIfHidden, scrollRowToSlot } from '@/lib/scroll'
 import { usePlayer } from '@/state/usePlayer'
 import { useUi } from '@/state/useUi'
 
 export function Panel(): React.JSX.Element | null {
-  const { panelOpen, panelTab, setPanelTab, setPanelOpen } = useUi()
+  const { panelOpen, panelTab } = useUi()
   if (!panelOpen) return null
 
   return (
     <aside className="panel" aria-label={panelTab === 'queue' ? '播放队列' : '正在播放'}>
-      <div className="panel-head">
-        {/* 「收起」在左、页签在右：收起是把这块整个移走，跟「在面板内部换页」不是
-            一类操作，分开摆就不容易点错。箭头朝右 —— 抽屉在窗口右边，收起就是往右走
-            （侧栏在左边，它的收起箭头朝左，两边一致） */}
-        <button
-          type="button"
-          className="icon-btn"
-          data-tip="收起面板"
-          aria-label="收起面板"
-          onClick={() => setPanelOpen(false)}
-        >
-          <IconChevronRight size={16} />
-        </button>
-        <div className="row grow" style={{ gap: 4 }}>
-          <button
-            type="button"
-            className="icon-btn"
-            data-active={panelTab === 'now-playing'}
-            data-tip="正在播放"
-            aria-label="正在播放"
-            onClick={() => setPanelTab('now-playing')}
-          >
-            <IconMusic size={16} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            data-active={panelTab === 'queue'}
-            data-tip="播放队列"
-            aria-label="播放队列"
-            onClick={() => setPanelTab('queue')}
-          >
-            <IconQueue size={16} />
-          </button>
-        </div>
-      </div>
-
-      <div
-        className="panel-body"
-        style={panelTab === 'now-playing' ? { overflow: 'hidden' } : undefined}
-      >
-        {panelTab === 'now-playing' ? <NowPlaying /> : <Queue />}
-      </div>
+      <div className="panel-body">{panelTab === 'now-playing' ? <NowPlaying /> : <Queue />}</div>
     </aside>
   )
 }
@@ -129,7 +90,9 @@ let savedQueueScroll = 0
  *
  * ★ 导出是为了给**迷你窗那块面板**复用（见 MiniPlayer.tsx）：同一个队列在两处出现，
  *   两套实现迟早分叉（拖拽排序、跟随当前曲滚动…都得各写一遍）。
- *   它自己不带滚动容器 —— 谁挂它谁负责给（抽屉那边是 .panel-body，迷你那边是 .mini-queue）。
+ * ★★ **摘要在滚动容器外面**，列表自己带一个 .queue-rows：两者是并列的 flex 兄弟，
+ *   行不可能滚到摘要底下。早先摘要 sticky 在滚动容器里，透明面板下要靠底色挡住穿透的行，
+ *   而铺底色又会与面板自己的底色叠成两倍浓度 —— 怎么调都不对。物理分开才是解法。
  * ★ currentSlot：定位当前曲时，要它落在容器**从上往下第 currentSlot+1 格**。
  *   迷你面板给 2（第 3 格 —— 那块只有 416px 高）；抽屉给默认的 0，意思是「看不见才居中」，
  *   理由见下面那段 effect 的说明。
@@ -168,7 +131,7 @@ export function Queue({
    */
   useEffect(() => {
     if (currentSlot > 0) return
-    const container = findScrollParent(listRef.current)
+    const container = listRef.current
     if (!container) return
     container.scrollTo({ top: savedQueueScroll, behavior: 'instant' })
     /* 位置**跟着滚动实时记**，不要在卸载时读：被动 effect 的清理跑的时候 DOM 已经摘掉，
@@ -215,72 +178,66 @@ export function Queue({
   const totalDuration = queue.reduce((sum, s) => sum + (s.duration || 0), 0)
 
   return (
-    <div ref={listRef}>
-      <div
-        className="row-between"
-        style={{ padding: '12px 16px 6px', fontSize: 12, color: 'var(--text-4)' }}
-      >
+    <div className="queue">
+      {/* 摘要是滚动容器的兄弟：它常驻，行只在下面那块里滚，透明面板下也不会互相穿透 */}
+      <div className="row-between queue-summary">
         <span>
           共 {queue.length} 首 · {formatDuration(totalDuration)}
         </span>
-        <button
-          type="button"
-          className="btn"
-          data-size="sm"
-          data-variant="ghost"
-          onClick={() => clearQueue()}
-        >
-          <IconTrash size={14} />
+        <button type="button" className="btn queue-clear" onClick={() => clearQueue()}>
+          <IconTrash size={13} />
           清空
         </button>
       </div>
 
-      {queue.map((song, index) => (
-        <div
-          key={`${song.id}-${index}`}
-          className="queue-item"
-          data-queue-index={index}
-          data-current={index === currentIndex}
-          data-dragging={dragIndex === index}
-          onDoubleClick={() => void jumpTo(index)}
-          onContextMenu={
-            menu ? (event) => openMenuFromEvent(event, buildSongMenuItems([song])) : undefined
-          }
-          draggable
-          onDragStart={() => setDragIndex(index)}
-          onDragOver={(event) => {
-            if (dragIndex === null) return
-            event.preventDefault()
-          }}
-          onDrop={() => {
-            if (dragIndex !== null && dragIndex !== index) moveInQueue(dragIndex, index)
-            setDragIndex(null)
-          }}
-          onDragEnd={() => setDragIndex(null)}
-        >
-          <span className="queue-drag" data-tip="拖动调整顺序">
-            <IconMusic size={14} />
-          </span>
-          <Cover coverUrl={songCoverUrl(song)} width={72} size={38} radius={8} kind="song" />
-          <div style={{ minWidth: 0 }}>
-            <div className="queue-title truncate">{fallbackTitle(song)}</div>
-            <div className="queue-artist truncate">{displayArtist(song.artist)}</div>
+      <div className="queue-rows" ref={listRef}>
+        {queue.map((song, index) => (
+          <div
+            key={`${song.id}-${index}`}
+            className="queue-item"
+            data-queue-index={index}
+            data-current={index === currentIndex}
+            data-dragging={dragIndex === index}
+            onDoubleClick={() => void jumpTo(index)}
+            onContextMenu={
+              menu ? (event) => openMenuFromEvent(event, buildSongMenuItems([song])) : undefined
+            }
+            draggable
+            onDragStart={() => setDragIndex(index)}
+            onDragOver={(event) => {
+              if (dragIndex === null) return
+              event.preventDefault()
+            }}
+            onDrop={() => {
+              if (dragIndex !== null && dragIndex !== index) moveInQueue(dragIndex, index)
+              setDragIndex(null)
+            }}
+            onDragEnd={() => setDragIndex(null)}
+          >
+            <span className="queue-drag" data-tip="拖动调整顺序">
+              <span className="queue-index">{index + 1}</span>
+            </span>
+            <Cover coverUrl={songCoverUrl(song)} width={72} size={38} radius={8} kind="song" />
+            <div style={{ minWidth: 0 }}>
+              <div className="queue-title truncate">{fallbackTitle(song)}</div>
+              <div className="queue-artist truncate">{displayArtist(song.artist)}</div>
+            </div>
+            <div className="row" style={{ gap: 2 }}>
+              <span className="song-duration">{formatDuration(song.duration)}</span>
+              <button
+                type="button"
+                className="icon-btn"
+                style={{ width: 26, height: 26 }}
+                data-tip="从队列移除"
+                aria-label="从队列移除"
+                onClick={() => removeFromQueue([index])}
+              >
+                <IconTrash size={14} />
+              </button>
+            </div>
           </div>
-          <div className="row" style={{ gap: 2 }}>
-            <span className="song-duration">{formatDuration(song.duration)}</span>
-            <button
-              type="button"
-              className="icon-btn"
-              style={{ width: 26, height: 26 }}
-              data-tip="从队列移除"
-              aria-label="从队列移除"
-              onClick={() => removeFromQueue([index])}
-            >
-              <IconTrash size={14} />
-            </button>
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
